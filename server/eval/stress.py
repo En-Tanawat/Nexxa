@@ -250,72 +250,77 @@ def run_api_stress(n: int, seed: int) -> StressReport:
             return AnalysisResult(None, 0.0, "fake: needs review", True, "fake")
         return AnalysisResult("ปกติ", 0.9, "fake", False, "fake")
 
-    tmp = Path(tempfile.mkdtemp(prefix="nexxa-stress-"))
+    tmp = None
     old_settings, old_analyze, old_key = storage.settings, analyzer.analyze_leaf, os.environ.get("NEXXA_DEVICE_KEY")
-    app_main.app.dependency_overrides[get_session] = override
-    storage.settings = dataclasses.replace(old_settings, image_dir=tmp)
-    analyzer.analyze_leaf = fake
-    os.environ["NEXXA_DEVICE_KEY"] = KEY
     ok200 = 0
     try:
-        client = TestClient(app_main.app)
+        tmp = Path(tempfile.mkdtemp(prefix="nexxa-stress-"))
+        app_main.app.dependency_overrides[get_session] = override
+        storage.settings = dataclasses.replace(old_settings, image_dir=tmp)
+        analyzer.analyze_leaf = fake
+        os.environ["NEXXA_DEVICE_KEY"] = KEY
+        client = TestClient(app_main.app, raise_server_exceptions=False)  # a route crash comes back as a 500, not an exception
         good = {"X-Device-Key": KEY}
         round_id = client.post("/rounds", headers=good).json()["round_id"]
         for i in range(n):
-            if i and i % 25 == 0:
-                round_id = client.post("/rounds", headers=good).json()["round_id"]
-            roll = rng.random()
-            before = len(received)
-            if roll < 0.02:  # deliberately wrong / missing key
-                cond = "(bad_key)"
-                headers = rng.choice([{}, {"X-Device-Key": "wrong"}, {"X-Device-Key": ""}])
-                r = client.post("/captures", headers=headers, files={"image": ("l.png", b"x", "image/png")},
-                                data={"rfid_uid": station_uids[0], "round_id": round_id})
-                expected = {401}
-            elif roll < 0.025:  # Content-Length over the cap: rejected before the form is parsed
-                cond = "(oversize_body)"
-                r = client.post("/captures", headers={**good, "Content-Type": "multipart/form-data; boundary=x"}, content=OVERSIZE_BODY)
-                expected = {413}
-            else:
-                cond = CONDITIONS[rng.randrange(len(CONDITIONS))]
-                data = make_condition_image(cond, rng)
-                u = rng.random()
-                uid = rng.choice(station_uids) if u < 0.85 else home_uid if u < 0.92 else f"UNKNOWN-{rng.randrange(1000)}"
-                rid = 999999 if rng.random() < 0.01 else round_id
-                form = {"rfid_uid": uid, "round_id": rid}
-                angle = rng.choice(["top", "side", "bottom", None])
-                if angle is not None:
-                    form["camera_angle"] = angle
-                try:
-                    q = check_quality(data)
-                except ImageDecodeError:
-                    q = None
-                r = client.post("/captures", headers=good, files={"image": ("l.png", data, "image/png")}, data=form)
-                if uid == home_uid:
-                    expected = {422}
-                elif uid not in station_uids:
-                    expected = {404}
-                elif rid == 999999:
-                    expected = {404}
-                elif q is None:
-                    expected = {422}  # undecodable / over the pixel cap
+            cond = "?"
+            try:
+                if i and i % 25 == 0:
+                    round_id = client.post("/rounds", headers=good).json()["round_id"]
+                roll = rng.random()
+                before = len(received)
+                if roll < 0.02:  # deliberately wrong / missing key
+                    cond = "(bad_key)"
+                    headers = rng.choice([{}, {"X-Device-Key": "wrong"}, {"X-Device-Key": ""}])
+                    r = client.post("/captures", headers=headers, files={"image": ("l.png", b"x", "image/png")},
+                                    data={"rfid_uid": station_uids[0], "round_id": round_id})
+                    expected = {401}
+                elif roll < 0.025:  # Content-Length over the cap: rejected before the form is parsed
+                    cond = "(oversize_body)"
+                    r = client.post("/captures", headers={**good, "Content-Type": "multipart/form-data; boundary=x"}, content=OVERSIZE_BODY)
+                    expected = {413}
                 else:
-                    expected = {200, 409}
-                if r.status_code == 200:
-                    status = r.json()["status"]
-                    want = {"analyzed", "needs_review"} if q and q.ok else {"retake", "needs_review"}
-                    if status not in want:
-                        _fail(failures, "expected_status", f"{cond}#{i} seed={seed}: 200 with status {status!r}, wanted one of {sorted(want)}")
-            code = r.status_code
-            report.per_condition.setdefault(cond, {}).setdefault(str(code), 0)
-            report.per_condition[cond][str(code)] += 1
-            ok200 += code == 200
-            if code not in ALLOWED | {401}:
-                _fail(failures, "status_allowed", f"{cond}#{i} seed={seed}: status {code}")
-            elif code not in expected:
-                _fail(failures, "expected_status", f"{cond}#{i} seed={seed}: status {code}, wanted one of {sorted(expected)}")
-            if len(received) > before and not received[-1]:
-                _fail(failures, "analyzer_gate", f"{cond}#{i} seed={seed}: analyze_leaf received an image that fails check_quality")
+                    cond = CONDITIONS[rng.randrange(len(CONDITIONS))]
+                    data = make_condition_image(cond, rng)
+                    u = rng.random()
+                    uid = rng.choice(station_uids) if u < 0.85 else home_uid if u < 0.92 else f"UNKNOWN-{rng.randrange(1000)}"
+                    rid = 999999 if rng.random() < 0.01 else round_id
+                    form = {"rfid_uid": uid, "round_id": rid}
+                    angle = rng.choice(["top", "side", "bottom", None])
+                    if angle is not None:
+                        form["camera_angle"] = angle
+                    try:
+                        q = check_quality(data)
+                    except ImageDecodeError:
+                        q = None
+                    r = client.post("/captures", headers=good, files={"image": ("l.png", data, "image/png")}, data=form)
+                    if uid == home_uid:
+                        expected = {422}
+                    elif uid not in station_uids:
+                        expected = {404}
+                    elif rid == 999999:
+                        expected = {404}
+                    elif q is None:
+                        expected = {422}  # undecodable / over the pixel cap
+                    else:
+                        expected = {200, 409}
+                    if r.status_code == 200:
+                        status = r.json()["status"]
+                        want = {"analyzed", "needs_review"} if q and q.ok else {"retake", "needs_review"}
+                        if status not in want:
+                            _fail(failures, "expected_status", f"{cond}#{i} seed={seed}: 200 with status {status!r}, wanted one of {sorted(want)}")
+                code = r.status_code
+                report.per_condition.setdefault(cond, {}).setdefault(str(code), 0)
+                report.per_condition[cond][str(code)] += 1
+                ok200 += code == 200
+                if code not in ALLOWED | {401}:
+                    _fail(failures, "status_allowed", f"{cond}#{i} seed={seed}: status {code}")
+                elif code not in expected:
+                    _fail(failures, "expected_status", f"{cond}#{i} seed={seed}: status {code}, wanted one of {sorted(expected)}")
+                if len(received) > before and not received[-1]:
+                    _fail(failures, "analyzer_gate", f"{cond}#{i} seed={seed}: analyze_leaf received an image that fails check_quality")
+            except Exception as e:  # noqa: BLE001 - anything unexpected is reported with its condition and iteration
+                report.unexpected_exceptions.append(f"{cond}#{i} seed={seed}: {type(e).__name__}: {e}")
 
         with Session(engine) as s:
             if s.scalar(select(func.count(Analysis.id)).join(Capture, Analysis.capture_id == Capture.id).where(Capture.quality_ok.is_(False))):
@@ -331,8 +336,8 @@ def run_api_stress(n: int, seed: int) -> StressReport:
             for key, count in keys.items():
                 if count > 1:
                     _fail(failures, "one_analysis_per_key", f"(round, station, angle)={tuple(key)} has {count} analyses (seed={seed})")
-    except Exception as e:  # noqa: BLE001 - e.g. a server-side exception re-raised by TestClient
-        report.unexpected_exceptions.append(f"api iteration (seed={seed}): {type(e).__name__}: {e}")
+    except Exception as e:  # noqa: BLE001 - setup or post-run check failed
+        report.unexpected_exceptions.append(f"api setup or post-run check (seed={seed}): {type(e).__name__}: {e}")
     finally:
         app_main.app.dependency_overrides.pop(get_session, None)
         storage.settings = old_settings
@@ -342,7 +347,8 @@ def run_api_stress(n: int, seed: int) -> StressReport:
         else:
             os.environ["NEXXA_DEVICE_KEY"] = old_key
         engine.dispose()
-        shutil.rmtree(tmp, ignore_errors=True)
+        if tmp is not None:
+            shutil.rmtree(tmp, ignore_errors=True)
     report.seconds = time.perf_counter() - t0
     return report
 
@@ -379,7 +385,7 @@ def main(argv: list[str] | None = None) -> int:
         r = run_quality_stress(args.quality, args.seed)
         _print_table(f"quality gate: {r.n} images, seed {args.seed}", r.per_condition, list(OUTCOMES))
         if r.real_per_condition:
-            _print_table("same conditions over real photos (eval/manifest.csv, report-only)", r.real_per_condition, list(OUTCOMES))
+            _print_table("same conditions over real photos (eval/manifest.csv, downscaled to <=480 px long side, report-only)", r.real_per_condition, list(OUTCOMES))
         _print_invariants(r, QUALITY_INVARIANTS)
         print(f"elapsed: {r.seconds:.1f}s")
         bad |= bool(r.invariant_failures or r.unexpected_exceptions)

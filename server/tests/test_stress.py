@@ -2,6 +2,8 @@ import random
 
 import pytest
 
+from app import main as app_main, storage
+from app.quality import QualityResult
 from eval import stress
 from eval.stress import CONDITIONS, make_condition_image, run_api_stress, run_quality_stress
 
@@ -60,3 +62,38 @@ def test_cli_returns_zero_and_prints_accuracy_warning(capsys):
     assert stress.main(["--quality", "200", "--api", "30", "--seed", "1"]) == 0
     out = capsys.readouterr().out
     assert "does NOT measure" in out
+
+
+def test_api_stress_is_deterministic():
+    a, b = run_api_stress(60, seed=2), run_api_stress(60, seed=2)
+    assert a.per_condition == b.per_condition
+    assert a.invariant_failures == b.invariant_failures
+
+
+def test_api_stress_catches_a_broken_gate(monkeypatch):
+    # route believes every image is fine, so bad images reach the analyzer: the harness must notice
+    monkeypatch.setattr(app_main, "check_quality", lambda data: QualityResult(True, None, 999.0, 100.0))
+    r = run_api_stress(80, seed=1)
+    assert any(f.startswith("[analyzer_gate]") for f in r.invariant_failures)
+
+
+def test_api_stress_records_500_with_iteration_and_keeps_going(monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(storage, "save_image", boom)
+    r = run_api_stress(60, seed=1)
+    hits = [f for f in r.invariant_failures if f.startswith("[status_allowed]")]
+    assert hits and all("#" in f and "status 500" in f for f in hits)
+    assert r.unexpected_exceptions == []
+    assert sum(sum(c.values()) for c in r.per_condition.values()) == 60  # every iteration ran
+
+
+def test_quality_stress_exception_names_condition_and_iteration(monkeypatch):
+    def boom(data):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(stress, "check_quality", boom)
+    r = run_quality_stress(20, seed=1)
+    assert any(e.startswith("sharp#0: RuntimeError") for e in r.unexpected_exceptions)
+    assert len(r.unexpected_exceptions) >= 20
