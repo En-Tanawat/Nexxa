@@ -1,6 +1,7 @@
 """Eval harness: python -m eval.run_eval --manifest eval/manifest.csv [--dry-run | --confirm-spend]
 
-The paid step needs BOTH env ANTHROPIC_API_KEY and --confirm-spend. The key is never printed.
+The paid step needs BOTH the chosen provider's key env var (e.g. ANTHROPIC_API_KEY, GEMINI_API_KEY) and
+--confirm-spend; non-anthropic providers also need NEXXA_VISION_MODEL. Keys are never printed.
 """
 import argparse
 import csv
@@ -18,6 +19,7 @@ from app.analyzer import analyze_leaf
 from app.config import settings
 from app.db import init_db
 from app.models import Crop
+from app.providers import PROVIDERS, UnknownProviderError, get_provider
 from app.quality import ImageDecodeError, check_quality
 from app.seed import CROP_NAME, seed
 
@@ -61,18 +63,30 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--manifest", default="eval/manifest.csv")
     ap.add_argument("--dry-run", action="store_true", help="quality gate + label distribution only, no API call")
-    ap.add_argument("--confirm-spend", action="store_true", help="acknowledge that the Claude calls cost real money")
+    ap.add_argument("--confirm-spend", action="store_true", help="acknowledge that the vision API calls cost real money")
+    ap.add_argument("--provider", default=None, help=f"one of {', '.join(PROVIDERS)} (default: NEXXA_VISION_PROVIDER or anthropic)")
     args = ap.parse_args(argv)
     for stream in (sys.stdout, sys.stderr):  # Windows consoles default to a non-UTF-8 codepage
         stream.reconfigure(encoding="utf-8")
 
-    if not args.dry_run and not (os.environ.get("ANTHROPIC_API_KEY") and args.confirm_spend):
+    try:
+        prov = get_provider(args.provider or settings.vision_provider)
+    except UnknownProviderError as e:
+        print(f"{e}. valid providers: {', '.join(PROVIDERS)}", file=sys.stderr)
+        return 2
+
+    if not args.dry_run and not (os.environ.get(prov.key_env) and args.confirm_spend):
         print(
-            "ปฏิเสธการรัน: การประเมินเรียก Claude API ซึ่งเสียเงินจริง ต้องตั้ง ANTHROPIC_API_KEY และใส่ --confirm-spend ทั้งคู่\n"
-            "REFUSED: this calls the paid Claude API. Set env ANTHROPIC_API_KEY AND pass --confirm-spend "
+            f"ปฏิเสธการรัน: การประเมินเรียก {prov.name} API ซึ่งเสียเงินจริง ต้องตั้ง {prov.key_env} และใส่ --confirm-spend ทั้งคู่\n"
+            f"REFUSED: this calls the paid {prov.name} API. Set env {prov.key_env} AND pass --confirm-spend "
             "(or use --dry-run for the quality gate only).",
             file=sys.stderr,
         )
+        return 2
+    # non-anthropic has no sensible default model id; settings.vision_model's default is a Claude id
+    model = settings.vision_model if prov.kind == "anthropic" else os.environ.get("NEXXA_VISION_MODEL", "")
+    if not args.dry_run and not model:
+        print(f"REFUSED: provider {prov.name} needs env NEXXA_VISION_MODEL (its model id); no API call made.", file=sys.stderr)
         return 2
 
     manifest = load_manifest(args.manifest)
@@ -104,11 +118,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     crop = seeded_crop()
-    print(f"model: {settings.vision_model}")
+    print(f"provider: {prov.name} model: {model}")
     rows, wrong = [], []
     start = time.perf_counter()
     for r, data in passed:
-        res = analyze_leaf(data, crop)
+        res = analyze_leaf(data, crop, provider=prov.name)
         rows.append((r["label"], res.label))
         if res.label != r["label"]:
             wrong.append((r["filename"], r["label"], res.label, res.confidence, res.note))
