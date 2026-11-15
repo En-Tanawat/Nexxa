@@ -101,7 +101,9 @@ def test_sdk_typeerror_is_api_failure_not_unreadable(crop, caplog):
     with caplog.at_level(logging.ERROR, logger="app.analyzer"):
         r = analyze_leaf(IMG, crop, client=FakeClient(error=err))
     assert r.label is None and r.confidence == 0.0 and r.needs_review is True
-    assert "เรียก Claude ไม่สำเร็จ" in r.note and "Could not resolve authentication" in r.note
+    assert "เรียก Claude ไม่สำเร็จ" in r.note and "TypeError" in r.note
+    assert "Could not resolve authentication" not in r.note  # full text stays in the log
+    assert "Could not resolve authentication" in caplog.text
     assert "อ่านไม่ได้" not in r.note
     assert any(rec.exc_info for rec in caplog.records)
 
@@ -133,3 +135,18 @@ def test_crop_none_does_not_raise(crop):
 def test_records_model_that_answered(crop):
     r = analyze_leaf(IMG, crop, client=FakeClient(answer("ปกติ", 0.9), model="fallback-model"))
     assert r.model == "fallback-model"
+
+
+def test_anthropic_client_built_with_one_retry_and_60s(crop, monkeypatch):
+    seen = []
+    monkeypatch.setattr("app.analyzer.anthropic.Anthropic",
+                        lambda **kw: seen.append(kw) or FakeClient(answer("ปกติ", 0.9)))
+    assert analyze_leaf(IMG, crop).label == "ปกติ"
+    assert seen == [{"timeout": 60, "max_retries": 1}]
+
+
+def test_anthropic_status_note_is_sanitised(crop):
+    req = httpx.Request("POST", "https://api.anthropic.com")
+    err = anthropic.RateLimitError("secret detail", response=httpx.Response(429, request=req), body=None)
+    r = analyze_leaf(IMG, crop, client=FakeClient(error=err))
+    assert "RateLimitError 429" in r.note and "secret detail" not in r.note

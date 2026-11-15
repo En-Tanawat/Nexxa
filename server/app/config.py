@@ -28,7 +28,7 @@ class Settings:
 
     @property
     def vision_provider(self) -> str:
-        return os.getenv("NEXXA_VISION_PROVIDER") or "anthropic"  # read per call
+        return (os.getenv("NEXXA_VISION_PROVIDER") or "").strip().lower() or "anthropic"  # read per call
 
     @property
     def vision_base_url(self) -> str | None:

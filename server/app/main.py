@@ -20,6 +20,7 @@ MULTIPART_OVERHEAD = 64 * 1024  # form fields + boundaries on top of the image
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    analyzer.check_vision_config()
     with Session(engine) as s:
         seed(s)
     yield

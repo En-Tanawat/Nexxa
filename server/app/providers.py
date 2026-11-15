@@ -25,6 +25,6 @@ PROVIDERS: dict[str, Provider] = {p.name: p for p in (
 
 def get_provider(name: str) -> Provider:
     try:
-        return PROVIDERS[name]
+        return PROVIDERS[name.strip().lower()]
     except KeyError:
         raise UnknownProviderError(f"unknown vision provider: {name!r}") from None

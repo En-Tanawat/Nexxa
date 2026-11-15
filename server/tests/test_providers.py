@@ -6,7 +6,7 @@ import httpx2 as httpx
 import openai
 import pytest
 
-from app.analyzer import analyze_leaf
+from app.analyzer import analyze_leaf, check_vision_config
 from app.models import Crop
 from app.providers import PROVIDERS, UnknownProviderError, get_provider
 
@@ -77,7 +77,7 @@ def test_openai_request_shape_and_result(crop):
     assert (r.label, r.confidence, r.note, r.needs_review) == ("ใบเหลือง", 0.9, "x", False)
     assert r.model == "some-model"
     kw = c.calls[0]
-    assert kw["model"] == "some-model" and kw["max_tokens"] == 8192
+    assert kw["model"] == "some-model" and kw["max_completion_tokens"] == 8192 and "max_tokens" not in kw
     assert "temperature" not in kw and "response_format" not in kw
     parts = kw["messages"][0]["content"]
     assert kw["messages"][0]["role"] == "user" and [p["type"] for p in parts] == ["text", "image_url"]
@@ -172,3 +172,82 @@ def test_shared_validation(crop):
     assert_failed(r)
     r = run(crop, FakeOpenAI(answer("ใบเหลือง", 0.4)))
     assert r.label == "ใบเหลือง" and r.needs_review is True
+
+
+@pytest.mark.parametrize("name,key_env", [("gemini", "GEMINI_API_KEY"), ("qwen", "DASHSCOPE_API_KEY"),
+                                          ("deepseek", "DEEPSEEK_API_KEY")])
+def test_compat_providers_keep_max_tokens(crop, name, key_env):
+    c = FakeOpenAI(answer("ปกติ", 0.9))
+    run(crop, c, name)
+    assert c.calls[0]["max_tokens"] == 8192 and "max_completion_tokens" not in c.calls[0]
+
+
+def test_misconfig_branches_log_error(crop, monkeypatch, caplog):
+    monkeypatch.delenv("NEXXA_VISION_MODEL")
+    with caplog.at_level(logging.ERROR, logger="app.analyzer"):
+        run(crop, None, "gemini")
+    assert "NEXXA_VISION_MODEL" in caplog.text
+    caplog.clear()
+    monkeypatch.setenv("NEXXA_VISION_MODEL", "m")
+    monkeypatch.setenv("DASHSCOPE_API_KEY", SECRET)
+    with caplog.at_level(logging.ERROR, logger="app.analyzer"):
+        run(crop, None, "gemini")
+    assert "GEMINI_API_KEY" in caplog.text and SECRET not in caplog.text
+
+
+def test_startup_check_warns_names_only(monkeypatch, caplog):
+    monkeypatch.setenv("NEXXA_VISION_PROVIDER", "gemini")
+    monkeypatch.delenv("NEXXA_VISION_MODEL")
+    monkeypatch.setenv("OPENAI_API_KEY", SECRET)
+    with caplog.at_level(logging.WARNING, logger="app.analyzer"):
+        check_vision_config()
+    assert "NEXXA_VISION_MODEL" in caplog.text and "GEMINI_API_KEY" in caplog.text
+    assert SECRET not in caplog.text
+
+
+def test_startup_check_quiet_when_ok(monkeypatch, caplog):
+    with caplog.at_level(logging.WARNING, logger="app.analyzer"):
+        check_vision_config()  # anthropic default
+        monkeypatch.setenv("NEXXA_VISION_PROVIDER", "openai")
+        monkeypatch.setenv("OPENAI_API_KEY", SECRET)
+        check_vision_config()
+    assert caplog.records == []
+
+
+def test_bad_base_url_is_needs_review_not_500(crop, monkeypatch, caplog):
+    monkeypatch.setenv("OPENAI_API_KEY", SECRET)
+    monkeypatch.setenv("NEXXA_VISION_BASE_URL", "::not a url")
+    with caplog.at_level(logging.ERROR, logger="app.analyzer"):
+        r = run(crop, None, "openai")  # real openai.OpenAI constructor; no network
+    assert_failed(r)
+    assert "NEXXA_VISION_BASE_URL" in r.note and "::not a url" not in r.note + caplog.text and SECRET not in r.note
+    assert any("InvalidURL" in rec.getMessage() for rec in caplog.records)
+
+
+def test_provider_name_is_normalised(crop, monkeypatch):
+    assert get_provider("  OpenAI ").name == "openai"
+    monkeypatch.setenv("NEXXA_VISION_PROVIDER", " QWEN ")
+    c = FakeOpenAI(answer("ปกติ", 0.9))
+    assert analyze_leaf(IMG, crop, client=c).label == "ปกติ"
+    assert run(crop, FakeOpenAI(answer("ปกติ", 0.9)), " Gemini ").label == "ปกติ"
+
+
+def test_failure_note_is_sanitised(crop, caplog):
+    req = httpx.Request("POST", "https://api.openai.com")
+    err = openai.RateLimitError("secret detail " + SECRET, response=httpx.Response(429, request=req), body=None)
+    with caplog.at_level(logging.ERROR, logger="app.analyzer"):
+        r = run(crop, FakeOpenAI(error=err))
+    assert_failed(r)
+    assert "RateLimitError" in r.note and "429" in r.note
+    assert "secret detail" not in r.note and SECRET not in r.note
+    assert "secret detail" in caplog.text  # full text stays in the log only
+
+
+def test_clients_built_with_one_retry_and_60s(crop, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", SECRET)
+    c = openai.OpenAI(api_key=SECRET, timeout=60, max_retries=1)
+    assert (c.max_retries, c.timeout) == (1, 60)
+    seen = []
+    monkeypatch.setattr("app.analyzer.openai.OpenAI", lambda **kw: seen.append(kw) or FakeOpenAI(answer("ปกติ", 0.9)))
+    run(crop, None, "openai")
+    assert seen[0]["max_retries"] == 1 and seen[0]["timeout"] == 60
