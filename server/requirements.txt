@@ -6,4 +6,5 @@ opencv-python-headless==5.0.0.93
 pytest==9.2.0
 python-multipart==0.0.33
 SQLAlchemy==2.1.8
+psycopg[binary]==3.3.8
 uvicorn==0.54.0

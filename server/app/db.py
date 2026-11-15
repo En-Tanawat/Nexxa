@@ -6,7 +6,11 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models import Base
 
-engine = create_engine(settings.database_url, connect_args={"check_same_thread": False})
+def connect_args_for(url: str) -> dict:
+    return {"check_same_thread": False} if url.startswith("sqlite") else {}
+
+
+engine = create_engine(settings.database_url, connect_args=connect_args_for(settings.database_url))
 
 
 def init_db(engine: Engine = engine) -> None:
