@@ -27,6 +27,14 @@ class Settings:
     min_confidence: float = 0.6
 
     @property
+    def vision_provider(self) -> str:
+        return os.getenv("NEXXA_VISION_PROVIDER") or "anthropic"  # read per call
+
+    @property
+    def vision_base_url(self) -> str | None:
+        return os.getenv("NEXXA_VISION_BASE_URL") or None  # overrides any provider's base url
+
+    @property
     def device_key(self) -> str:
         return os.getenv("NEXXA_DEVICE_KEY", "")  # read per request; empty means every upload is rejected
 
