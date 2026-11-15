@@ -6,7 +6,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db import init_db
 from app.models import Crop, Station
-from app.seed import seed
+from app.seed import TIPBURN_HINT, seed
 
 
 @pytest.fixture
@@ -27,7 +27,7 @@ def count(s, model, *where):
 def test_seed_crop(session):
     crop = session.scalar(select(Crop).where(Crop.name == "กรีนคอส"))
     assert crop.labels == ["ปกติ", "ใบเหลือง", "จุดน้ำตาล"]
-    assert "tipburn" in crop.prompt and "tipburn" in crop.notes
+    assert "tipburn" in crop.notes and TIPBURN_HINT not in crop.prompt  # sent once, via notes
 
 
 def test_seed_stations(session):
@@ -56,3 +56,11 @@ def test_reseed_after_uid_replacement(session):
     assert count(session, Station, Station.kind == "station", Station.active.is_(True)) == 3
     assert count(session, Station, Station.kind == "home") == 1
     assert count(session, Station, Station.rfid_uid.like("TODO-REPLACE%")) == 0
+
+
+def test_round_defaults_to_open(session):
+    from app.models import Round
+    r = Round()
+    session.add(r)
+    session.flush()
+    assert r.status == "open"

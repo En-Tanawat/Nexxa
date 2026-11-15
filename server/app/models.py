@@ -39,7 +39,7 @@ class Round(Base):
     __tablename__ = "rounds"
     id: Mapped[int] = mapped_column(primary_key=True)
     started_at: Mapped[datetime] = mapped_column(default=_now)
-    status: Mapped[str] = mapped_column(String, default="running")
+    status: Mapped[str] = mapped_column(String, default="open")
 
 
 class Capture(Base):

@@ -13,7 +13,7 @@ CROP_NAME = "กรีนคอส"
 LABELS = ["ปกติ", "ใบเหลือง", "จุดน้ำตาล"]
 PROMPT = (
     "ดูภาพถ่ายใบผักสลัดกรีนคอส (green cos) แล้วเลือกป้ายกำกับเพียงหนึ่งอย่างจากรายการของพืชนี้ "
-    "ได้แก่ " + ", ".join(LABELS) + ". " + TIPBURN_HINT
+    "ได้แก่ " + ", ".join(LABELS) + "."  # TIPBURN_HINT goes in crop.notes; build_prompt includes both
 )
 
 # TODO: replace the placeholder rfid_uid values with the real tag UIDs when the tags are installed.

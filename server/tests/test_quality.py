@@ -47,3 +47,19 @@ def test_white_image_too_bright():
 def test_non_image_raises(data):
     with pytest.raises(ImageDecodeError):
         check_quality(data)
+
+
+def test_oversized_dimensions_rejected():
+    # tiny file, but 8000 px wide: more than the OV2640's 1600x1200 could ever send
+    with pytest.raises(ImageDecodeError):
+        check_quality(_png(np.full((100, 8000, 3), 128, np.uint8)))
+
+
+def test_decoder_pixel_cap_error_is_decode_error(monkeypatch):
+    # with OPENCV_IO_MAX_IMAGE_PIXELS set, imdecode raises cv2.error instead of returning None
+    def boom(*a, **k):
+        raise cv2.error("pixels <= CV_IO_MAX_IMAGE_PIXELS")
+
+    monkeypatch.setattr(cv2, "imdecode", boom)
+    with pytest.raises(ImageDecodeError):
+        check_quality(b"x")
