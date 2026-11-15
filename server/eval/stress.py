@@ -351,9 +351,9 @@ def run_api_stress(n: int, seed: int) -> StressReport:
 
 def _print_table(title: str, table: dict[str, dict[str, int]], cols: list[str]) -> None:
     print(f"\n{title}")
-    print(f"  {'condition':<18}" + "".join(f"{c:>12}" for c in cols))
+    print(f"  {'condition':<18}" + "".join(f"{c:>14}" for c in cols))
     for cond, counts in table.items():
-        print(f"  {cond:<18}" + "".join(f"{counts.get(c, 0):>12}" for c in cols))
+        print(f"  {cond:<18}" + "".join(f"{counts.get(c, 0):>14}" for c in cols))
 
 
 def _print_invariants(report: StressReport, names: tuple[str, ...]) -> None:
