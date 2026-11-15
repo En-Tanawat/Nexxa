@@ -46,3 +46,13 @@ def test_rfid_unique(session):
     session.add(Station(rfid_uid=uid, name="dup", kind="station"))
     with pytest.raises(IntegrityError):
         session.commit()
+
+
+def test_reseed_after_uid_replacement(session):
+    for i, st in enumerate(session.scalars(select(Station)).all()):
+        st.rfid_uid = f"04A1B2C3D{i}"
+    session.commit()
+    seed(session)
+    assert count(session, Station, Station.kind == "station", Station.active.is_(True)) == 3
+    assert count(session, Station, Station.kind == "home") == 1
+    assert count(session, Station, Station.rfid_uid.like("TODO-REPLACE%")) == 0

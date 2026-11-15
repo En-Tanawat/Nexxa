@@ -31,7 +31,8 @@ def seed(session: Session) -> None:
         crop = Crop(name=CROP_NAME, labels=LABELS, prompt=PROMPT, notes=TIPBURN_HINT)
         session.add(crop)
         session.flush()
-    for s in STATIONS:
-        if session.scalar(select(Station).where(Station.rfid_uid == s["rfid_uid"])) is None:
+    # Seed stations only into an empty table: real UIDs replace the placeholders later.
+    if session.scalar(select(Station.id).limit(1)) is None:
+        for s in STATIONS:
             session.add(Station(**s, crop_id=None if s["kind"] == "home" else crop.id))
     session.commit()
