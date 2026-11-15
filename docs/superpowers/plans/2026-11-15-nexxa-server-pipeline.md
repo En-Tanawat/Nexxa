@@ -43,7 +43,7 @@
 
 - [ ] **Step 1: เขียนเทสต์ที่ล้มเหลว** (`test_models.py`): หลัง `init_db` + `seed` บน SQLite in-memory → มี crop `กรีนคอส` ที่ `labels == ["ปกติ","ใบเหลือง","จุดน้ำตาล"]`, มี station `kind="station"` และ `active` 3 แถว, มี `kind="home"` 1 แถว, เรียก `seed` ซ้ำแล้วจำนวนแถวเท่าเดิม, และใส่ `rfid_uid` ซ้ำแล้วเกิด `IntegrityError`
 - [ ] **Step 2: รันให้ล้ม** — `cd server && pytest tests/test_models.py -v` → FAIL (import error)
-- [ ] **Step 3: สร้างโปรเจกต์ (`git init` ใน `server/`), ติดตั้ง dependencies, เขียน config/db/models/seed ตาม Interfaces** — UID ใน seed เป็นค่าตัวอย่างชัดเจน (`TODO-REPLACE-1`…) เพื่อแทนด้วยค่าจริงตอนติดตั้งแท็ก
+- [ ] **Step 3: สร้างโปรเจกต์ใน `server/` (git repo อยู่ที่ root `D:\Work\Nexxa` แล้ว ห้าม `git init` ซ้ำ), ติดตั้ง dependencies, เขียน config/db/models/seed ตาม Interfaces** — UID ใน seed เป็นค่าตัวอย่างชัดเจน (`TODO-REPLACE-1`…) เพื่อแทนด้วยค่าจริงตอนติดตั้งแท็ก
 - [ ] **Step 4: รันให้ผ่าน** — `pytest tests/test_models.py -v` → PASS
 - [ ] **Step 5: Commit** — `git add -A && git commit -m "feat: schema and seed for crops and stations"`
 
@@ -108,7 +108,7 @@
 - [ ] **Step 2: รันให้ล้ม** → FAIL
 - [ ] **Step 3: implement `compute_metrics` + `run_eval.py`** (อ่าน manifest, ผ่าน `check_quality` ก่อน, เรียก `analyze_leaf`, สรุปผล)
 - [ ] **Step 4: รันให้ผ่าน** → PASS
-- [ ] **Step 5: รวบรวมภาพ ~30 ภาพ** ที่ `eval/images/` — กรีนคอส/ผักสลัดใบปกติ ~10, ใบเหลือง ~10, จุดน้ำตาล ~8, ใบแก่/tipburn ที่ไม่ใช่โรค ~2–4 (label = `ปกติ` พร้อม `note`); ดาวน์โหลดจากแหล่งที่ใบอนุญาตระบุชัด (เช่น Wikimedia Commons CC) บันทึก `source_url`+`license` ทุกภาพ; ตรวจแต่ละไฟล์เปิดเป็นภาพได้ด้วย OpenCV; **ผู้ใช้/คนปลูกต้องตรวจป้าย label** เพราะป้ายจากคำบรรยายหน้าเว็บไม่น่าเชื่อถือ
+- [ ] **Step 5: รวบรวมภาพ ~30 ภาพ** ที่ `eval/images/` — กรีนคอส/ผักสลัดใบปกติ ~10, ใบเหลือง ~10, จุดน้ำตาล ~8, ขอบใบไหม้ tipburn ~2–4 (label = `จุดน้ำตาล`, `note` ระบุ tipburn — ผู้ใช้ยังไม่ยืนยัน จึงถือเป็นค่าเริ่มต้นที่ปรับได้ใน `crops.notes`/prompt) และใบแก่รอบนอกเหลืองตามธรรมชาติ (label = `ปกติ`); ดาวน์โหลดจากแหล่งที่ใบอนุญาตระบุชัด (เช่น Wikimedia Commons CC) บันทึก `source_url`+`license` ทุกภาพ; ตรวจแต่ละไฟล์เปิดเป็นภาพได้ด้วย OpenCV; **ผู้ใช้/คนปลูกต้องตรวจป้าย label** เพราะป้ายจากคำบรรยายหน้าเว็บไม่น่าเชื่อถือ
 - [ ] **Step 6: ขออนุมัติค่าใช้จ่ายแล้วรัน eval** — `python -m eval.run_eval --manifest eval/manifest.csv` ด้วย `NEXXA_VISION_MODEL` อย่างน้อย 1 รุ่น (เทียบ 2 รุ่นถ้าผู้ใช้ต้องการ) รายงานผลตามจริง รวมภาพที่ผิด
 - [ ] **Step 7: Commit** — `git add eval/manifest.csv eval/run_eval.py tests && git commit -m "feat: eval harness and manifest"`
 
