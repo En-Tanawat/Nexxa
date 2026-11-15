@@ -1,0 +1,9 @@
+scratch_research/
+server/eval/images/
+.superpowers/
+.env
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+*.db
