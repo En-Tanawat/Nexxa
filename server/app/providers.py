@@ -1,3 +1,4 @@
+import fnmatch
 from dataclasses import dataclass
 from typing import Literal
 
@@ -16,7 +17,16 @@ class Provider:
 
 
 def host_allowed(provider: Provider, host: str) -> bool:
-    return any(host.endswith(h) if h.startswith(".") else host == h for h in provider.api_hosts)
+    for h in provider.api_hosts:
+        if h.startswith("."):
+            if host.endswith(h):
+                return True
+        elif "*" in h:
+            if fnmatch.fnmatch(host, h):
+                return True
+        elif host == h:
+            return True
+    return False
 
 
 PROVIDERS: dict[str, Provider] = {p.name: p for p in (
@@ -26,7 +36,7 @@ PROVIDERS: dict[str, Provider] = {p.name: p for p in (
              ("generativelanguage.googleapis.com",)),
     # DashScope has regional and per-workspace hosts, e.g. <id>.ap-southeast-1.maas.aliyuncs.com
     Provider("qwen", "openai_compat", "DASHSCOPE_API_KEY", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-             (".aliyuncs.com",)),
+             ("dashscope*.aliyuncs.com", "*.maas.aliyuncs.com")),
     Provider("deepseek", "openai_compat", "DEEPSEEK_API_KEY", "https://api.deepseek.com", ("api.deepseek.com",)),
 )}
 

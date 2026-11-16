@@ -1,4 +1,5 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 from datetime import date
 
@@ -59,6 +60,17 @@ async def reject_oversized(request: Request, call_next):
     return await call_next(request)
 
 
+_DOCS_PATHS = {"/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"}
+
+
+@app.middleware("http")
+async def block_debug_docs(request: Request, call_next):
+    raw_path = request.url.path.rstrip("/")
+    if (request.url.path in _DOCS_PATHS or raw_path in _DOCS_PATHS) and os.getenv("NEXXA_ENV") != "development":
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    return await call_next(request)
+
+
 # No 'unsafe-inline': all CSS/JS are files under /static. When the three.js importmap lands, generate a
 # per-request nonce in this middleware (request.state.csp_nonce), add 'nonce-<n>' to script-src and
 # put nonce="{{ request.state.csp_nonce }}" on that one <script type="importmap">.
@@ -85,6 +97,8 @@ async def page_security_headers(request: Request, call_next):
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "same-origin")
         response.headers.setdefault("X-Frame-Options", "DENY")
+    if request.url.path.startswith("/admin"):
+        response.headers["Cache-Control"] = "no-store, private"
     return response
 
 
