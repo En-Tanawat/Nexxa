@@ -13,13 +13,13 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import analyzer, robot, runtime_config, stats, storage, summaries
+from app import analyzer, robot, runtime_config, stats, storage, summaries, telegram
 from app.config import settings
 from app.db import engine, get_session, init_db
 from app.models import Analysis, Capture, Crop, Round, Station
 from app.quality import ImageDecodeError, check_quality, jpeg_decodes
 from app.seed import seed
-from app.web import deps, routes_admin, routes_auth, routes_keys, routes_public, routes_public_api
+from app.web import deps, routes_admin, routes_auth, routes_keys, routes_public, routes_public_api, routes_telegram
 from app.web.templating import STATIC_DIR
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
@@ -111,6 +111,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 app.include_router(routes_auth.router)
 app.include_router(routes_admin.router)
 app.include_router(routes_keys.router)
+app.include_router(routes_telegram.router)
 app.include_router(routes_public_api.router)
 app.include_router(routes_public.router)
 app.add_exception_handler(deps.CsrfError, routes_auth.csrf_error_page)
@@ -163,6 +164,11 @@ class RobotTelemetryInput(BaseModel):
         return v
 
 
+def _docked_summary(round_id: int) -> None:
+    summaries.docked_fallback(round_id)
+    telegram.notify(round_id, None)  # no-op when the round summary was not made or was already announced
+
+
 @app.post("/api/robot/telemetry", dependencies=[Depends(require_device_key)])
 def post_robot_telemetry(payload: RobotTelemetryInput, background: BackgroundTasks, session: Session = Depends(get_session)):
     robot.robot.update_telemetry(session, payload.model_dump(exclude_unset=True))
@@ -170,7 +176,7 @@ def post_robot_telemetry(payload: RobotTelemetryInput, background: BackgroundTas
         # fallback only: the robot normally calls POST /rounds/{id}/finish first, which makes the round summary
         try:
             if not summaries.has_round_summary(session, payload.round_id):
-                background.add_task(summaries.docked_fallback, payload.round_id)
+                background.add_task(_docked_summary, payload.round_id)
         except Exception as e:  # telemetry must never fail because of summaries
             log.warning("docked summary check failed: %s", type(e).__name__)
     return {"ok": True, "updated_at": robot.robot.updated_at}
@@ -328,7 +334,7 @@ def _summary_body(row, station_id: int | None) -> dict:
 
 
 @app.post("/rounds/{round_id}/stations/{rfid_uid}/summary", dependencies=[Depends(require_device_key)])
-def create_station_summary(round_id: RoundId, rfid_uid: str, session: Session = Depends(get_session)):
+def create_station_summary(round_id: RoundId, rfid_uid: str, background: BackgroundTasks, session: Session = Depends(get_session)):
     """The robot waits for this before driving on. Template text is always made; the AI wording gets 25 s at most."""
     if session.get(Round, round_id) is None:
         raise HTTPException(404, "unknown round")
@@ -337,11 +343,13 @@ def create_station_summary(round_id: RoundId, rfid_uid: str, session: Session = 
         raise HTTPException(404, "unknown rfid_uid")
     if session.scalar(select(Capture.id).where(Capture.round_id == round_id, Capture.station_id == station.id).limit(1)) is None:
         raise HTTPException(409, "no capture for this station in this round")
-    return _summary_body(summaries.generate_station_summary(session, round_id, station.id), station.id)
+    body = _summary_body(summaries.generate_station_summary(session, round_id, station.id), station.id)
+    background.add_task(telegram.notify, round_id, station.id)  # after the response; sent once per summary
+    return body
 
 
 @app.post("/rounds/{round_id}/finish", dependencies=[Depends(require_device_key)])
-def finish_round(round_id: RoundId, session: Session = Depends(get_session)):
+def finish_round(round_id: RoundId, background: BackgroundTasks, session: Session = Depends(get_session)):
     rnd = session.get(Round, round_id)
     if rnd is None:
         raise HTTPException(404, "unknown round")
@@ -351,4 +359,6 @@ def finish_round(round_id: RoundId, session: Session = Depends(get_session)):
     if rnd.status == "open":  # a seeded "demo" round keeps its status
         rnd.status = "done"
         session.commit()
-    return _summary_body(row, None)
+    body = _summary_body(row, None)
+    background.add_task(telegram.notify, round_id, None)
+    return body

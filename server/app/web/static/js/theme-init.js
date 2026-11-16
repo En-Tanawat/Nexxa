@@ -11,7 +11,8 @@
   if (theme !== "light" && theme !== "dark") {
     var dark = false;
     try {
-      dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      // a page may ask for dark when the visitor has not chosen (the robot screen); a saved choice still wins
+      dark = document.documentElement.getAttribute("data-default-theme") === "dark" || window.matchMedia("(prefers-color-scheme: dark)").matches;
     } catch (e) {
       dark = false;
     }

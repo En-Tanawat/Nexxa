@@ -40,6 +40,7 @@ ACTION_TH = {
     "user.create": "สร้างผู้ดูแล", "user.password": "เปลี่ยนรหัสผ่าน", "user.delete": "ลบผู้ดูแล",
     "key.create": "สร้างคีย์ AI", "key.replace": "เปลี่ยนคีย์ AI", "key.toggle": "เปิด/ปิดคีย์ AI", "key.delete": "ลบคีย์ AI",
     "device.create": "สร้าง device key", "device.revoke": "ยกเลิก device key", "ai.update": "แก้ไขการตั้งค่า AI",
+    "telegram.update": "แก้ไขการแจ้งเตือน Telegram", "telegram.test": "ส่งข้อความทดสอบ Telegram",
     "setting.update": "แก้ไขการตั้งค่าระบบ", "robot.simulate": "จำลองส่งข้อมูลหุ่นยนต์", "robot.reset": "รีเซ็ตสถานะหุ่นยนต์",
     "summary.regenerate": "สร้างสรุปรอบตรวจใหม่", "demo.seed": "สร้างข้อมูลจำลองฤดูกาล", "demo.clear": "ล้างข้อมูลจำลอง",
 }

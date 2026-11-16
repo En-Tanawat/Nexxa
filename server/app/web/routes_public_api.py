@@ -294,3 +294,48 @@ def latest_summary(session: Session = Depends(get_session)):
     s, station = row
     return {"summary": {"round_id": s.round_id, "scope": s.scope, "station": station, "headline": summaries.headline(s.text),
                         **_summary_out(s)}}
+
+
+# --- robot screen: one small read for /screen (robot status + this round's station results + the round result) ----
+
+def _screen_station(row: Summary) -> dict:
+    """Findings only: ใบเหลือง / จุดน้ำตาล with their angles, never a count or a label for ปกติ."""
+    f = row.facts
+    where = summaries._affected(f["angles"])
+    prev = f["previous_visit"]
+    return {"id": row.id, "level": summaries.display(f)["level"], "present": len(f["present"]),
+            "yellow": f["counts"][stats.YELLOW], "yellow_angles": where[stats.YELLOW],
+            "brown": f["counts"][stats.BROWN], "brown_angles": where[stats.BROWN],
+            "abnormal_rate": f["abnormal_rate"], "vs_baseline_pp": f["baseline"]["delta_pp"],
+            "vs_previous_pp": prev["delta_pp"] if prev else None,
+            "trend": f["trend"]["direction"], "trend_label": f["trend"]["label"], **_summary_out(row)}
+
+
+def _screen_round(row: Summary) -> dict:
+    f = row.facts
+    worst = f["worst"]
+    return {"id": row.id, "level": summaries.display(f)["level"],
+            "stations_inspected": f["stations_inspected"], "stations_expected": f["stations_expected"],
+            "yellow": f["counts"][stats.YELLOW], "brown": f["counts"][stats.BROWN],
+            "abnormal_rate": f["abnormal_rate"], "vs_baseline_pp": f["baseline"]["delta_pp"],
+            "worst": {"station": worst["station"], "abnormal_rate": worst["abnormal_rate"]} if worst else None,
+            "rising": f["rising"], **_summary_out(row)}
+
+
+@router.get("/screen")
+def screen(response: Response, session: Session = Depends(get_session)):
+    status = robot.robot.get_robot_status(session)
+    # the robot's round while it is reporting one, else the newest round
+    round_id = status["round_id"] or session.scalar(select(Round.id).order_by(Round.started_at.desc(), Round.id.desc()).limit(1))
+    stations, whole, latest = [], None, None
+    if round_id is not None:
+        rows = {s.station_id: s for s in session.scalars(select(Summary).where(Summary.round_id == round_id))}
+        for sid, name, order in session.execute(select(Station.id, Station.name, Station.route_order).where(*VISIBLE).order_by(Station.route_order, Station.id)):
+            stations.append({"station_id": sid, "name": name, "order": order, "summary": _screen_station(rows[sid]) if sid in rows else None})
+        shown = {x["station_id"] for x in stations}
+        done = [r for sid, r in rows.items() if sid in shown]
+        latest = max(done, key=lambda r: (r.created_at, r.id)).station_id if done else None
+        whole = _screen_round(rows[None]) if None in rows else None
+    response.headers["Cache-Control"] = "public, max-age=2"  # live view polled every 4 s: the default 30 s would show old data
+    return {"updated_at": _now_iso(), "demo": _demo(session), "robot": status, "round_id": round_id,
+            "stations": stations, "latest": latest, "round": whole}

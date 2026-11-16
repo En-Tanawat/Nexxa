@@ -47,3 +47,9 @@ def history_round(request: Request, round_id: Annotated[int, Path(ge=1, le=INT_M
     # an unknown round still gets the shell (404): history.js shows the "not found" message from the API's 404
     found = session.get(Round, round_id) is not None
     return _page(request, "history_round.html", 200 if found else 404, demo=_demo(session), round_id=round_id)
+
+
+@router.get("/screen", response_class=HTMLResponse)
+def screen(request: Request, session: Session = Depends(get_session)):
+    # ?kiosk=1 drops the site chrome (decided here so nothing flashes); the page is meant for the phone on the robot
+    return _page(request, "screen.html", demo=_demo(session), kiosk=request.query_params.get("kiosk") == "1")

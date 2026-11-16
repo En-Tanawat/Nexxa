@@ -1,0 +1,90 @@
+{%- extends "base_public.html" -%}
+{#- Robot screen: a phone-sized display on the robot. Glance-sized: one colour hero, two number tiles, one comparison line.
+    The long text sits behind one toggle. screen.js fills everything with textContent; ?kiosk=1 (decided here) drops the site chrome. -#}
+{% block title %}หน้าจอหุ่นยนต์{% endblock %}
+{% block html_attrs %} data-default-theme="dark"{% endblock %}
+{% block head %}
+  <meta name="description" content="ผลตรวจผักล่าสุดจากหุ่นยนต์ แสดงบนหน้าจอขนาดเล็ก">
+  <script src="/static/js/screen.js" type="module"></script>
+{% endblock %}
+{% block body_class %}page-screen{% if kiosk %} is-kiosk{% endif %}{% endblock %}
+
+{% block body %}
+<div class="scr" id="screen">
+  {%- if not kiosk %}
+  <nav class="scr-site" aria-label="เมนูหลัก">
+    <a class="scr-btn scr-btn--ghost" href="/">{{ c.icon("overview", 22) }}<span>แดชบอร์ด</span></a>
+    {{ c.theme_toggle() }}
+  </nav>
+  {%- endif %}
+
+  <header class="scr-strip">
+    <p class="scr-strip__state" id="scr-state" data-state="loading">{{ c.icon("robot", 28) }}<span id="scr-state-text">กำลังโหลด</span></p>
+    <p class="scr-strip__batt" id="scr-batt" data-low="0">{{ c.icon("battery", 28) }}<span id="scr-batt-text">–</span></p>
+  </header>
+
+  <div class="scr-error" id="scr-error" role="alert" hidden>
+    {{ c.icon("wifi-off", 28) }}<p>ขาดการเชื่อมต่อ</p>
+    <button class="scr-btn" id="scr-retry" type="button">{{ c.icon("refresh", 22) }}<span>ลองใหม่</span></button>
+  </div>
+
+  <main class="scr-main" id="main" tabindex="-1">
+    <noscript><p class="scr-empty">หน้านี้ต้องเปิดใช้สคริปต์ในเบราว์เซอร์</p></noscript>
+
+    <section class="scr-busy" id="scr-busy" role="status" hidden>
+      <span class="scr-spinner" aria-hidden="true"></span>
+      <p class="scr-busy__text">กำลังสรุปผล</p>
+    </section>
+
+    <section class="scr-hero" id="scr-hero" data-level="none" aria-labelledby="scr-cap">
+      <h1 class="scr-hero__cap" id="scr-cap">รอผลตรวจ</h1>
+      <p class="scr-hero__level">
+        {{ c.icon("ok", 48, "scr-ico scr-ico--ok") }}{{ c.icon("warn", 48, "scr-ico scr-ico--warn") }}{{ c.icon("danger", 48, "scr-ico scr-ico--alert") }}{{ c.icon("clock", 48, "scr-ico scr-ico--none") }}
+        <span id="scr-level-text">รอผลตรวจ</span>
+      </p>
+      <p class="scr-hero__sub" id="scr-sub" hidden></p>
+    </section>
+
+    <ul class="scr-tiles" id="scr-tiles" aria-label="สิ่งที่พบ" hidden>
+      <li class="scr-tile scr-tile--yellow" id="scr-yellow" data-on="0">
+        <p class="scr-tile__name">ใบเหลือง</p>
+        <p class="scr-tile__n" id="scr-yellow-n">0</p>
+        <ul class="scr-sides" id="scr-yellow-sides" aria-label="ด้านที่พบใบเหลือง"></ul>
+      </li>
+      <li class="scr-tile scr-tile--brown" id="scr-brown" data-on="0">
+        <p class="scr-tile__name">จุดน้ำตาล</p>
+        <p class="scr-tile__n" id="scr-brown-n">0</p>
+        <ul class="scr-sides" id="scr-brown-sides" aria-label="ด้านที่พบจุดน้ำตาล"></ul>
+      </li>
+    </ul>
+
+    <p class="scr-compare" id="scr-compare" data-dir="none" hidden><span class="scr-compare__arrow" id="scr-arrow" aria-hidden="true">●</span><span id="scr-compare-text">ยังไม่มีข้อมูลเทียบ</span></p>
+
+    <ul class="scr-pills" id="scr-pills" aria-label="สถานีในรอบนี้" hidden></ul>
+
+    <div class="scr-actions">
+      <button class="scr-btn" id="scr-detail-btn" type="button" aria-expanded="false" aria-controls="scr-detail" hidden><span>ดูรายละเอียด</span></button>
+      <button class="scr-btn" id="scr-cam-btn" type="button" aria-pressed="false" aria-controls="scr-cam">{{ c.icon("camera", 22) }}<span>ดูภาพสด</span></button>
+      <button class="scr-btn scr-btn--icon" id="scr-fs-btn" type="button" aria-pressed="false" aria-label="เต็มจอ" hidden>{{ c.icon("maximize", 24) }}</button>
+    </div>
+
+    <section class="scr-detail" id="scr-detail" aria-label="รายละเอียด" hidden>
+      <dl class="scr-facts" id="scr-facts"></dl>
+      <div class="scr-text" id="scr-text"></div>
+      <p class="scr-src" id="scr-src"></p>
+    </section>
+
+    <section class="scr-cam" id="scr-cam" aria-label="ภาพสดจากกล้องหุ่นยนต์" hidden>
+      <div class="robot-cam-frame">
+        <img id="robot-cam-stream" class="robot-cam-img" alt="ภาพล่าสุดจากกล้องหุ่นยนต์" hidden>
+        <div class="robot-cam-fallback" id="robot-cam-fallback">
+          <p class="robot-cam-fallback__title" id="robot-fallback-title">ยังไม่มีภาพจากกล้อง</p>
+          <p class="robot-cam-fallback__text" id="robot-fallback-text"></p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <p class="sr-only" id="scr-live" role="status" aria-live="polite"></p>
+</div>
+{% endblock %}

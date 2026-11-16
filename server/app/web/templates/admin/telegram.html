@@ -1,0 +1,64 @@
+{%- extends "base_admin.html" -%}
+{%- set active = "telegram" -%}
+{% block title %}แจ้งเตือน Telegram{% endblock %}
+{% block content %}
+{{ c.page_header("แจ้งเตือน Telegram", eyebrow="การแจ้งเตือน", text="ส่งสรุปรายสถานีและสรุปทั้งรอบเข้า Telegram ของผู้ดูแลทันทีที่หุ่นยนต์สรุปผลเสร็จ ถ้าไม่ตั้งค่า ระบบทำงานตามปกติโดยไม่ส่งอะไรออกไป") }}
+
+{%- if not secrets_on %}
+{{ c.alert("warn", "เซิร์ฟเวอร์ยังไม่ได้ตั้ง NEXXA_SECRET_KEY จึงเก็บโทเค็นบอทไม่ได้ และบันทึกการตั้งค่าหน้านี้ไม่ได้ ให้ผู้ดูแลเซิร์ฟเวอร์ตั้งค่านี้ก่อน", title="ระบบเข้ารหัสคีย์ปิดอยู่", role="alert") }}
+{%- endif %}
+{%- if errors %}{{ c.alert("danger", "มี " ~ errors | length ~ " ช่องที่ต้องแก้ไข ดูข้อความสีแดงใต้แต่ละช่อง ยังไม่มีการเปลี่ยนแปลงใดถูกบันทึก", title="บันทึกไม่สำเร็จ", role="alert") }}{% endif %}
+
+<div class="grid-2">
+  <form class="form" method="post" action="/admin/telegram" data-busy-form>
+    {{ c.csrf_field() }}
+    {% call c.card("บอทและแชท", subtitle="โทเค็นเป็นความลับ เก็บแบบเข้ารหัสและไม่แสดงซ้ำ", icon="telegram") %}
+    <div class="form-grid">
+      <div class="form-grid__wide">
+        {{ c.field("token", "โทเค็นบอท", type="password", value="", error=errors.get("token"),
+                   help=("ตั้งค่าแล้ว (" ~ mask(last4) ~ ") เว้นว่าง = ใช้โทเค็นเดิม" if token == "ok" else
+                         "ตั้งค่าไว้แล้วแต่ถอดรหัสไม่ได้ (NEXXA_SECRET_KEY เปลี่ยน) กรุณาใส่โทเค็นใหม่" if token == "broken" else
+                         "ยังไม่ได้ตั้งค่า วางโทเค็นที่ได้จาก @BotFather"),
+                   attrs={"maxlength": 100, "autocomplete": "off", "spellcheck": "false", "placeholder": "123456789:AA..."}) }}
+      </div>
+      <div class="form-grid__wide">
+        {{ c.field("chat_id", "Chat ID", value=values["chat_id"], error=errors.get("chat_id"),
+                   help="ตัวเลข (กลุ่มหรือช่องส่วนตัวขึ้นต้นด้วย -) หรือ @ชื่อช่องสาธารณะ",
+                   attrs={"maxlength": 40, "autocomplete": "off", "spellcheck": "false", "placeholder": "เช่น 123456789"}) }}
+      </div>
+    </div>
+    <fieldset class="fieldset-plain check-list">
+      <legend class="field__label">การแจ้งเตือน</legend>
+      {%- for name, label in [("enabled", "เปิดใช้งานการแจ้งเตือน Telegram"), ("notify_station", "แจ้งสรุปรายสถานี"), ("notify_round", "แจ้งสรุปทั้งรอบ"),
+                              ("only_abnormal", "แจ้งเฉพาะเมื่อพบใบเหลืองหรือจุดน้ำตาล")] %}
+      <label class="check"><input type="checkbox" name="{{ name }}" value="1"{% if values[name] %} checked{% endif %}><span>{{ label }}</span></label>
+      {%- endfor %}
+    </fieldset>
+    <div class="form-actions">
+      {{ c.button("บันทึกการตั้งค่า", icon="ok") }}
+    </div>
+    {% endcall %}
+  </form>
+
+  <div class="stack-lg">
+    {% call c.card("ทดสอบและจัดการโทเค็น", subtitle="การทดสอบใช้ค่าที่บันทึกไว้แล้ว", icon="activity") %}
+    <div class="actions">
+      {{ c.post_button("/admin/telegram/test", "ส่งข้อความทดสอบ", icon="telegram") }}
+      {%- if token != "none" %}
+      {{ c.post_button("/admin/telegram/token/delete", "ลบโทเค็น", variant="danger", icon="trash", confirm="ลบโทเค็นบอทและปิดการแจ้งเตือนใช่หรือไม่?") }}
+      {%- endif %}
+    </div>
+    {% endcall %}
+
+    {% call c.card("วิธีตั้งค่า", icon="info") %}
+    <ol class="help-steps">
+      <li>เปิด Telegram คุยกับ <strong>@BotFather</strong> พิมพ์ <code translate="no">/newbot</code> แล้วตั้งชื่อบอท จะได้โทเค็น</li>
+      <li>เปิดแชทกับบอทที่สร้าง กด Start (หรือเพิ่มบอทเข้ากลุ่ม/ช่องและตั้งเป็นผู้ดูแล)</li>
+      <li>หา Chat ID: ส่งข้อความหาบอท แล้วเปิด <code translate="no">https://api.telegram.org/bot&lt;โทเค็น&gt;/getUpdates</code> ในเบราว์เซอร์ ดูค่า <code translate="no">chat.id</code> หรือใช้บอท @userinfobot</li>
+      <li>วางโทเค็นกับ Chat ID ที่นี่ กดบันทึก แล้วกด &ldquo;ส่งข้อความทดสอบ&rdquo;</li>
+    </ol>
+    <p class="note">ข้อความที่ส่งเป็นข้อความธรรมดา แจ้งเฉพาะใบเหลืองและจุดน้ำตาล พร้อมเทียบวันก่อนหน้าและแนวโน้ม ส่งครั้งเดียวต่อหนึ่งสรุป สูงสุด 20 ข้อความต่อนาที</p>
+    {% endcall %}
+  </div>
+</div>
+{% endblock %}

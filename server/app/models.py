@@ -125,6 +125,7 @@ class Summary(Base):
     model: Mapped[str | None]
     created_at: Mapped[datetime] = mapped_column(default=_now)
     updated_at: Mapped[datetime] = mapped_column(default=_now)
+    notified_at: Mapped[datetime | None]  # set once when the Telegram notification is claimed (telegram.py)
 
 
 class AdminUser(Base):
