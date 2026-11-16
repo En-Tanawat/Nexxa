@@ -214,7 +214,20 @@
         <div><h2 class="card__title" id="stations-title">สถานีทั้งหมด</h2><p class="card__subtitle" id="stations-sub">สถานะจากภาพล่าสุดของแต่ละสถานี</p></div>
       </header>
       <div class="scroll-area" tabindex="0" role="region" aria-label="รายการสถานี">
-        <ul class="row-list" id="station-list" role="list"></ul>
+        <ul class="row-list" id="station-list" role="list">
+          <li class="row-skeleton" aria-hidden="true">
+            <div class="row__main"><span class="skeleton skeleton--text w-60"></span><span class="skeleton skeleton--text w-40"></span></div>
+            <div class="row__side"><span class="skeleton skeleton--badge"></span></div>
+          </li>
+          <li class="row-skeleton" aria-hidden="true">
+            <div class="row__main"><span class="skeleton skeleton--text w-50"></span><span class="skeleton skeleton--text w-30"></span></div>
+            <div class="row__side"><span class="skeleton skeleton--badge"></span></div>
+          </li>
+          <li class="row-skeleton" aria-hidden="true">
+            <div class="row__main"><span class="skeleton skeleton--text w-70"></span><span class="skeleton skeleton--text w-40"></span></div>
+            <div class="row__side"><span class="skeleton skeleton--badge"></span></div>
+          </li>
+        </ul>
         <p class="list-empty" id="station-empty" hidden>ยังไม่มีสถานีที่เปิดใช้งาน</p>
       </div>
       <ul class="status-legend" role="list" aria-label="ความหมายของสถานะ">
@@ -233,7 +246,16 @@
         <span class="icon-tile">{{ c.icon("batch", 20) }}</span>
         <div><h2 class="card__title" id="lots-title">ล็อตใกล้เก็บเกี่ยว</h2><p class="card__subtitle" id="lots-sub">เหลือไม่เกิน 7 วัน หรือเกินกำหนดไม่เกิน 14 วัน</p></div>
       </header>
-      <ul class="row-list" id="lot-list" role="list"></ul>
+      <ul class="row-list" id="lot-list" role="list">
+        <li class="row-skeleton" aria-hidden="true">
+          <div class="row__main"><span class="skeleton skeleton--text w-50"></span><span class="skeleton skeleton--text w-30"></span></div>
+          <div class="row__side"><span class="skeleton skeleton--badge"></span></div>
+        </li>
+        <li class="row-skeleton" aria-hidden="true">
+          <div class="row__main"><span class="skeleton skeleton--text w-60"></span><span class="skeleton skeleton--text w-40"></span></div>
+          <div class="row__side"><span class="skeleton skeleton--badge"></span></div>
+        </li>
+      </ul>
       <p class="list-empty" id="lot-empty" hidden>ยังไม่มีล็อตที่ใกล้ถึงวันเก็บเกี่ยว</p>
       <p class="note" id="lot-note">กำหนดเก็บเกี่ยวคำนวณจากรอบ 45 วันนับจากวันปลูก (ค่าสมมติ ไม่ใช่วันที่ผู้ปลูกกำหนด)</p>
     </section>
@@ -243,7 +265,16 @@
         <span class="icon-tile">{{ c.icon("activity", 20) }}</span>
         <div><h2 class="card__title" id="activity-title">การตรวจล่าสุด</h2><p class="card__subtitle">สถานีที่เพิ่งมีภาพเข้ามา</p></div>
       </header>
-      <ul class="row-list" id="activity-list" role="list"></ul>
+      <ul class="row-list" id="activity-list" role="list">
+        <li class="row-skeleton" aria-hidden="true">
+          <div class="row__main"><span class="skeleton skeleton--text w-50"></span><span class="skeleton skeleton--text w-30"></span></div>
+          <div class="row__side"><span class="skeleton skeleton--badge"></span></div>
+        </li>
+        <li class="row-skeleton" aria-hidden="true">
+          <div class="row__main"><span class="skeleton skeleton--text w-70"></span><span class="skeleton skeleton--text w-40"></span></div>
+          <div class="row__side"><span class="skeleton skeleton--badge"></span></div>
+        </li>
+      </ul>
       <p class="list-empty" id="activity-empty" hidden>ยังไม่มีการตรวจ</p>
     </section>
   </div>

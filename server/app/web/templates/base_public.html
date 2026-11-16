@@ -19,6 +19,7 @@
   <script src="/static/js/app.js" defer></script>
 </head>
 <body class="{% block body_class %}{% endblock %}">
+  <div class="page-progress" id="page-progress" role="progressbar" aria-hidden="true"></div>
   <a class="skip-link" href="#main">ข้ามไปยังเนื้อหาหลัก</a>
   {% block body %}{% endblock %}
   {#- CC BY 4.0 attribution for the background photo, shown wherever it is (see static/img/CREDITS.md). #}

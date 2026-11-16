@@ -252,3 +252,27 @@
   {%- if page < pages %}{{ button("ถัดไป", variant="secondary", size="sm", href=base ~ (page + 1)) }}{% endif %}
 </nav>
 {%- endmacro %}
+
+{#- Skeleton UI components for loading states -#}
+{% macro skeleton(kind="text", width_class="w-full") -%}
+<span class="skeleton skeleton--{{ kind }} {{ width_class }}" aria-hidden="true"></span>
+{%- endmacro %}
+
+{% macro skeleton_table(cols=5, rows=4) -%}
+<div class="table-wrap table-skeleton" aria-hidden="true">
+  <table class="table">
+    <thead><tr>
+      {%- for i in range(cols) %}<th><span class="skeleton skeleton--text w-50"></span></th>{% endfor -%}
+    </tr></thead>
+    <tbody>
+      {%- for r in range(rows) %}
+      <tr>
+        {%- for c in range(cols) %}
+        <td><span class="skeleton skeleton--text {% if c == 0 %}w-80{% elif c == 1 %}w-60{% else %}w-40{% endif %}"></span></td>
+        {%- endfor %}
+      </tr>
+      {%- endfor %}
+    </tbody>
+  </table>
+</div>
+{%- endmacro %}

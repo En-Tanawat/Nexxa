@@ -53,6 +53,46 @@
     }
   });
 
+  // Top loading progress bar & navigation feedback
+  const getProgress = () => {
+    let p = document.getElementById("page-progress");
+    if (!p) {
+      p = document.createElement("div");
+      p.id = "page-progress";
+      p.className = "page-progress";
+      p.setAttribute("role", "progressbar");
+      p.setAttribute("aria-hidden", "true");
+      document.body.appendChild(p);
+    }
+    return p;
+  };
+  const showProgress = () => getProgress().classList.add("is-active");
+
+  // Show progress on form submissions
+  document.addEventListener("submit", (e) => {
+    if (!e.defaultPrevented) {
+      showProgress();
+      const form = e.target;
+      if (form instanceof HTMLFormElement && form.getAttribute("role") === "search") {
+        document.querySelectorAll(".table-wrap").forEach((tw) => tw.classList.add("is-loading"));
+      }
+    }
+  });
+
+  // Show progress on internal link clicks & before unload
+  document.addEventListener("click", (e) => {
+    const link = e.target instanceof Element ? e.target.closest("a") : null;
+    if (link && link.href && !link.target && !link.hasAttribute("download")) {
+      try {
+        const u = new URL(link.href, window.location.origin);
+        if (u.origin === window.location.origin && !u.hash && u.pathname !== window.location.pathname) {
+          showProgress();
+        }
+      } catch {}
+    }
+  });
+  window.addEventListener("beforeunload", showProgress);
+
   // Mobile nav strip: keep the current section in view.
   document.querySelector(".nav__link[aria-current=page]")?.scrollIntoView({ block: "nearest", inline: "center" });
 
