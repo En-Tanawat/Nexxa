@@ -3,20 +3,22 @@
 {% block body_class %}page-auth{% endblock %}
 {% block toasts %}{{ c.toast_region(flash or ({"text": "ออกจากระบบเรียบร้อยแล้ว", "kind": "info"} if logged_out else none)) }}{% endblock %}
 {% block body %}
+<header class="auth__top">{{ c.theme_toggle() }}</header>
 <main class="auth" id="main" tabindex="-1">
-  <div class="auth__inner">
-    <div class="auth__brand">
-      {{ c.logo(44) }}
-      <p class="auth__tagline">ระบบตรวจสุขภาพผักอัตโนมัติ</p>
+  <section class="card card--auth auth-split" aria-labelledby="login-title">
+    <div class="auth-split__art">
+      <img class="auth-split__photo" src="/static/img/login-fern.webp" alt="" width="880" height="1073" decoding="async">
+      <div class="auth-split__brand">
+        {{ c.logo(64, cls="brand--line") }}
+        <p class="auth-split__tagline">ระบบตรวจสุขภาพผักอัตโนมัติ<br>สำหรับโรงเรือนอัจฉริยะ</p>
+      </div>
     </div>
 
-    <section class="card card--auth" aria-labelledby="login-title">
-      <header class="auth__head">
-        <span class="icon-tile icon-tile--lg">{{ c.icon("shield", 22) }}</span>
-        <div>
-          <h1 class="auth__title" id="login-title">เข้าสู่ระบบผู้ดูแล</h1>
-          <p class="auth__lead">จัดการสถานี ล็อตผัก คีย์ AI และอุปกรณ์ของโรงเรือน</p>
-        </div>
+    <div class="auth-split__form">
+      <header class="auth__intro">
+        <p class="eyebrow">แผงผู้ดูแลระบบ</p>
+        <h1 class="auth__title" id="login-title">ยินดีต้อนรับ</h1>
+        <p class="auth__lead">เข้าสู่ระบบเพื่อจัดการสถานี ล็อตผัก คีย์ AI และอุปกรณ์ของโรงเรือน</p>
       </header>
 
       {%- if not session_enabled %}
@@ -35,15 +37,15 @@
         <fieldset class="form__fields"{% if not session_enabled %} disabled{% endif %}>
           <legend class="sr-only">ข้อมูลเข้าสู่ระบบ</legend>
           {%- if error %}{{ c.alert("danger", error, role="alert") }}{% endif %}
-          {{ c.field("username", "ชื่อผู้ใช้", value=username, required=true, autocomplete="username",
-                     attrs={"autocapitalize": "none", "spellcheck": "false", "autofocus": true}) }}
-          {{ c.password_field("password", "รหัสผ่าน") }}
+          {{ c.field("username", "ชื่อผู้ใช้", value=username, required=true, autocomplete="username", icon="user",
+                     attrs={"autocapitalize": "none", "spellcheck": "false", "autofocus": true, "placeholder": "ชื่อผู้ใช้ของคุณ"}) }}
+          {{ c.password_field("password", "รหัสผ่าน", icon="lock") }}
           {{ c.button("เข้าสู่ระบบ", icon="arrow-right", block=true) }}
         </fieldset>
       </form>
-    </section>
 
-    <p class="auth__foot">{{ c.icon("lock", 14) }}<span>เฉพาะผู้ดูแลระบบ · การเข้าสู่ระบบผิดซ้ำหลายครั้งจะถูกพักชั่วคราว</span></p>
-  </div>
+      <p class="auth__foot">{{ c.icon("shield", 16) }}<span>เฉพาะผู้ดูแลระบบ · ลืมรหัสผ่านให้ผู้ดูแลอีกคนตั้งใหม่ให้ · เข้าสู่ระบบผิดซ้ำหลายครั้งจะถูกพักชั่วคราว</span></p>
+    </div>
+  </section>
 </main>
 {% endblock %}

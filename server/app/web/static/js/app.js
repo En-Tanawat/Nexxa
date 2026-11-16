@@ -1,5 +1,5 @@
 // NEXXA UI behaviour: progressive enhancement only — every page works without this file.
-// User-supplied text is never written with innerHTML; this file only toggles attributes.
+// User-supplied text is never parsed as HTML; this file only toggles attributes.
 (() => {
   "use strict";
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");

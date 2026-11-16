@@ -2,6 +2,7 @@
 {% block title %}{{ title }}{% endblock %}
 {% block body_class %}page-auth{% endblock %}
 {% block body %}
+<header class="auth__top">{{ c.theme_toggle() }}</header>
 <main class="auth" id="main" tabindex="-1">
   <div class="auth__inner">
     <div class="auth__brand">{{ c.logo(44) }}</div>

@@ -38,6 +38,7 @@
       <p class="topbar__title">{% block heading %}{{ self.title() }}{% endblock %}</p>
     </div>
     <div class="topbar__user">
+      {{ c.theme_toggle() }}
       {%- if admin %}
       <span class="user-chip" title="เข้าสู่ระบบในชื่อ {{ admin.username }}">
         <span class="user-chip__avatar" aria-hidden="true">{{ admin.username[:1] | upper }}</span>
