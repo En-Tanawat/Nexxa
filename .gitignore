@@ -21,8 +21,7 @@ eval/
 docs/
 Requirements/
 *.pdf
-requirements.txt
-server/requirements*.txt
+# NOTE: server/requirements.txt MUST stay tracked (Render runs `pip install -r requirements.txt`)
 
 # AI Scratch, Research, Prompts, Evals, Tooling & Plans (remove all AI files from git)
 scratch_research/
