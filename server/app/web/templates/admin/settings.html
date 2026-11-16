@@ -28,25 +28,25 @@
         {{ c.field("robot_stream_url", "URL สตรีมกล้องหุ่นยนต์ (MJPEG Stream)", value=values["robot_stream_url"], error=errors.get("robot_stream_url"), required=false,
                    help="เช่น http://192.168.1.150:81/stream หรือปล่อยว่างไว้หากส่งผ่าน telemetry", attrs={"maxlength": 500, "autocomplete": "off"}) }}
       </div>
-      <div class="form-actions" style="margin-top: 1.25rem;">{{ c.button("บันทึกการตั้งค่า", icon="ok") }}</div>
+      <div class="form-actions">{{ c.button("บันทึกการตั้งค่า", icon="ok") }}</div>
       {% endcall %}
     </form>
   </div>
 
-  <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+  <div class="stack-lg">
     <!-- Demo Data Management -->
     {% call c.card("จัดการข้อมูลจำลอง (Demo Data)", subtitle="สร้างหรือล้างข้อมูลประวัติ 100 วันสำหรับการทดสอบ", icon="refresh") %}
-    <p style="font-size: 0.875rem; color: var(--color-text-muted); margin-bottom: 1rem;">
+    <p class="card__subtitle">
       คุณสามารถสร้างข้อมูลการตรวจรอบและภาพจำลอง 4 มุมย้อนหลัง 100 วัน เพื่อดูสถิติ กราฟแนวโน้ม และการจำลอง 3D Twin หรือล้างข้อมูลทั้งหมดเมื่อต้องการเริ่มต้นใหม่
     </p>
-    <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+    <div class="actions">
       <form method="post" action="/admin/settings/seed-demo" data-busy-form>
         {{ c.csrf_field() }}
         <button type="submit" class="btn btn--secondary btn--sm">
           {{ c.icon("refresh", 16) }} <span>สร้างข้อมูลจำลอง 100 วัน</span>
         </button>
       </form>
-      <form method="post" action="/admin/settings/clear-demo" data-busy-form onsubmit="return confirm('ยืนยันที่จะล้างข้อมูลจำลองทั้งหมดหรือไม่?');">
+      <form method="post" action="/admin/settings/clear-demo" data-busy-form data-confirm="ยืนยันที่จะล้างข้อมูลจำลองทั้งหมดหรือไม่?">
         {{ c.csrf_field() }}
         <button type="submit" class="btn btn--neutral btn--sm">
           {{ c.icon("trash", 16) }} <span>ล้างข้อมูลจำลอง</span>

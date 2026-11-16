@@ -55,4 +55,36 @@
 
   // Mobile nav strip: keep the current section in view.
   document.querySelector(".nav__link[aria-current=page]")?.scrollIntoView({ block: "nearest", inline: "center" });
+
+  // Robot ESP32 live monitor auto-polling
+  const robotRoot = document.querySelector("[data-robot-monitor]");
+  if (robotRoot) {
+    const poll = () => {
+      fetch("/api/public/robot")
+        .then((r) => r.json())
+        .then((data) => {
+          if (!data) return;
+          const setTxt = (id, txt) => {
+            const el = robotRoot.querySelector(`[data-robot-${id}]`);
+            if (el && txt !== undefined && txt !== null) el.textContent = txt;
+          };
+          setTxt("state", data.state_label || (data.online ? data.state : "ออฟไลน์"));
+          setTxt("battery", data.battery_pct !== null && data.battery_pct !== undefined ? `${data.battery_pct}%` : "-");
+          setTxt("wifi", data.wifi_rssi !== null && data.wifi_rssi !== undefined ? `${data.wifi_rssi} dBm` : "-");
+          setTxt("station", data.station_name || (data.station_id ? `สถานี ${data.station_id}` : "จุดพัก / แท่นชาร์จ"));
+          setTxt("angle", data.camera_angle_label ? `มุมกล้อง: ${data.camera_angle_label}` : "ไม่ได้เปิดกล้อง");
+          setTxt("step", data.step || "-");
+          setTxt("hud-status", data.online ? "LIVE" : "OFFLINE");
+          setTxt("hud-angle", data.camera_angle_label ? `มุม${data.camera_angle_label}` : "-");
+
+          const badge = robotRoot.querySelector("[data-robot-badge-online]");
+          if (badge) {
+            badge.textContent = data.online ? "ออนไลน์" : "ออฟไลน์";
+            badge.className = data.online ? "badge badge--ok" : "badge badge--neutral";
+          }
+        })
+        .catch(() => {});
+    };
+    setInterval(poll, 4000);
+  }
 })();

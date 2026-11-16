@@ -5,7 +5,6 @@
 {{ c.page_header("ภาพรวมระบบ", eyebrow="สวัสดี " ~ admin.username, text="สรุปสิ่งที่ตั้งค่าไว้ในระบบ NEXXA เลือกการ์ดเพื่อไปจัดการแต่ละส่วน") }}
 
 {%- set cards = [
-  ("robot", "/admin/robot", "หุ่นยนต์ ESP32", (robot_status.state_label if robot_status is defined and robot_status.online else "หุ่นยนต์ ESP32"), ("ออนไลน์ · แบตเตอรี่ " ~ robot_status.battery_pct ~ "%" if (robot_status is defined and robot_status.online and robot_status.battery_pct is not none) else ("ออนไลน์" if (robot_status is defined and robot_status.online) else "สถานะ: ออฟไลน์"))),
   ("station", "/admin/stations", "สถานีตรวจ", stats.stations, "เปิดใช้งาน " ~ stats.stations_active ~ " สถานี"),
   ("batch", "/admin/batches", "ล็อตผัก", stats.batches, "กำลังปลูก " ~ stats.batches_growing ~ " ล็อต"),
   ("key", "/admin/keys", "คีย์ AI", stats.ai_keys, "เปิดใช้งาน " ~ stats.ai_keys_active ~ " คีย์"),
@@ -20,7 +19,7 @@
         <span class="stat__go">{{ c.icon("arrow-right", 18) }}<span class="sr-only">จัดการ{{ label }}</span></span>
       </span>
       <span class="stat__label">{{ label }}</span>
-      <span class="stat__value" style="font-size: 1.5rem;">{{ value }}</span>
+      <span class="stat__value">{{ value }}</span>
       <span class="stat__sub">{{ sub }}</span>
     </a>
   </li>
