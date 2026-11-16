@@ -1,0 +1,19 @@
+{%- extends "base_admin.html" -%}
+{%- set active = "settings" -%}
+{% block title %}ตั้งค่าระบบ{% endblock %}
+{% block content %}
+{{ c.page_header("ตั้งค่าระบบ", eyebrow="การตั้งค่าทั่วไป", text="กำหนดค่าระบบเพิ่มเติม เช่น สตรีมกล้องของหุ่นยนต์") }}
+
+{%- if errors %}{{ c.alert("danger", "มี " ~ errors | length ~ " ช่องที่ต้องแก้ไข ดูข้อความสีแดงใต้ช่อง", title="บันทึกไม่สำเร็จ", role="alert") }}{% endif %}
+
+<form class="form" method="post" action="/admin/settings" data-busy-form>
+  {{ c.csrf_field() }}
+  {% call c.card("การถ่ายทอดสดจากหุ่นยนต์ (Robot Live Stream)", subtitle="URL สำหรับดูภาพสดจากกล้อง ESP32-CAM ของหุ่นยนต์", icon="camera") %}
+  <div class="form-grid">
+    {{ c.field("robot_stream_url", "URL สตรีมกล้องหุ่นยนต์ (MJPEG Stream)", value=values["robot_stream_url"], error=errors.get("robot_stream_url"), required=false,
+               help="เช่น http://192.168.1.150:81/stream หรือปล่อยว่างไว้หากส่งผ่าน telemetry", attrs={"maxlength": 500, "autocomplete": "off"}) }}
+  </div>
+  <div class="form-actions">{{ c.button("บันทึกการตั้งค่า", icon="ok") }}</div>
+  {% endcall %}
+</form>
+{% endblock %}

@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import stats
+from app import robot, stats
 from app.db import get_session
 from app.models import Analysis, AppSetting, Batch, Capture, Crop, DailyStat, Station
 
@@ -217,3 +217,9 @@ def twin(session: Session = Depends(get_session)):
                     "route_order": st.route_order, "status": status,
                     "age_days": stats.age_days(batch, day) if batch else None, "last_seen_at": seen, "confidence": conf})
     return {"stations": out, "updated_at": _now_iso(), "demo": _demo(session)}
+
+
+@router.get("/robot")
+def robot_status(session: Session = Depends(get_session)):
+    return robot.robot.get_robot_status(session)
+

@@ -5,10 +5,11 @@ from datetime import date
 from fastapi import Depends, FastAPI, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import analyzer, runtime_config, stats, storage
+from app import analyzer, robot, runtime_config, stats, storage
 from app.config import settings
 from app.db import engine, get_session, init_db
 from app.models import Analysis, Capture, Crop, Round, Station
@@ -66,7 +67,7 @@ CSP = "; ".join([
     "script-src 'self'",
     "style-src 'self' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com",
-    "img-src 'self' data:",
+    "img-src 'self' data: http: https:",
     "connect-src 'self'",
     "object-src 'none'",
     "base-uri 'none'",
@@ -102,11 +103,59 @@ def require_device_key(x_device_key: str | None = Header(None), session: Session
         raise HTTPException(401, "invalid device key")
 
 
+class RobotTelemetryInput(BaseModel):
+    state: str | None = None
+    round_id: int | None = None
+    station_id: int | None = None
+    rfid_uid: str | None = None
+    camera_angle: str | None = None
+    step: str | None = None
+    step_index: int | None = None
+    stream_url: str | None = None
+    battery_pct: int | None = None
+    wifi_rssi: int | None = None
+
+    @field_validator("state")
+    @classmethod
+    def validate_state(cls, v):
+        if v is not None and v not in {"idle", "moving", "inspecting", "analyzing", "returning", "docked", "error"}:
+            raise ValueError("invalid state")
+        return v
+
+    @field_validator("step_index")
+    @classmethod
+    def validate_step_index(cls, v):
+        if v is not None and not (1 <= v <= 5):
+            raise ValueError("step_index must be between 1 and 5")
+        return v
+
+    @field_validator("camera_angle")
+    @classmethod
+    def validate_camera_angle(cls, v):
+        if v is not None and v not in {"front", "right", "back", "left"}:
+            raise ValueError("camera_angle must be front, right, back, or left")
+        return v
+
+    @field_validator("battery_pct")
+    @classmethod
+    def validate_battery_pct(cls, v):
+        if v is not None and not (0 <= v <= 100):
+            raise ValueError("battery_pct must be between 0 and 100")
+        return v
+
+
+@app.post("/api/robot/telemetry", dependencies=[Depends(require_device_key)])
+def post_robot_telemetry(payload: RobotTelemetryInput, session: Session = Depends(get_session)):
+    robot.robot.update_telemetry(session, payload.model_dump(exclude_unset=True))
+    return {"ok": True, "updated_at": robot.robot.updated_at}
+
+
 @app.post("/rounds", dependencies=[Depends(require_device_key)])
 def create_round(session: Session = Depends(get_session)):
     rnd = Round(status="open")
     session.add(rnd)
     session.commit()
+    robot.robot.update_from_round(rnd.id)
     return {"round_id": rnd.id}
 
 
@@ -168,6 +217,10 @@ def create_capture(
         label, confidence = result.label, result.confidence
         status = "needs_review" if result.needs_review else "analyzed"
     session.commit()
+    try:
+        robot.robot.update_from_capture(session, round_id, station_id, camera_angle, quality.ok, status, attempt)
+    except Exception:
+        pass
     body = {"capture_id": capture_id, "status": status, "label": label, "confidence": confidence, "attempt": attempt}
     safe_rollup(session, day, station_id)  # one upsert for this day/station; failure is swallowed
     return body

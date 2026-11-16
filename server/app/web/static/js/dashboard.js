@@ -207,16 +207,282 @@ function stopTimers() {
   state.timer = state.ticker = null;
 }
 
+// --- Robot Live Camera and Inspection Step Monitor --------------------------
+const ROBOT_POLL_MS = 3_000;
+let robotTimer = null;
+let robotInflight = false;
+let robotStreamError = false;
+let currentStreamUrl = "";
+
+function scheduleRobot(ms) {
+  clearTimeout(robotTimer);
+  robotTimer = document.hidden ? null : setTimeout(pollRobot, ms);
+}
+
+function stopRobotTimer() {
+  clearTimeout(robotTimer);
+  robotTimer = null;
+}
+
+async function pollRobot() {
+  if (robotInflight || document.hidden) return;
+  robotInflight = true;
+  try {
+    const data = await getJson("/api/public/robot");
+    renderRobot(data);
+  } catch {
+    renderRobotOffline();
+  } finally {
+    robotInflight = false;
+    scheduleRobot(ROBOT_POLL_MS);
+  }
+}
+
+function renderRobotOffline() {
+  const badge = $("robot-badge-status");
+  const dot = $("robot-status-dot");
+  const label = $("robot-status-label");
+  if (badge) badge.className = "badge badge--neutral";
+  if (dot) dot.className = "robot-pulse-dot robot-pulse-dot--neutral";
+  if (label) label.textContent = "ออฟไลน์";
+
+  const img = $("robot-cam-stream");
+  const fallback = $("robot-cam-fallback");
+  const fbTitle = $("robot-fallback-title");
+  const fbText = $("robot-fallback-text");
+  if (img) img.hidden = true;
+  if (fallback) fallback.hidden = false;
+  if (fbTitle) fbTitle.textContent = "หุ่นยนต์ออฟไลน์";
+  if (fbText) fbText.textContent = "หุ่นยนต์หยุดส่งข้อมูลเกิน 45 วินาที สัญญาณภาพจะปรากฏเมื่อหุ่นยนต์กลับมาออนไลน์";
+
+  const chipLive = $("robot-chip-live-text");
+  if (chipLive) chipLive.textContent = "⚪ ออฟไลน์";
+
+  if ($("robot-chip-angle")) $("robot-chip-angle").hidden = true;
+  if ($("robot-chip-station")) $("robot-chip-station").hidden = true;
+  if ($("robot-chip-battery")) $("robot-chip-battery").hidden = true;
+  if ($("robot-chip-wifi")) $("robot-chip-wifi").hidden = true;
+
+  if ($("robot-current-step")) $("robot-current-step").textContent = "หุ่นยนต์ออฟไลน์ (ขาดการติดต่อเกิน 45 วินาที)";
+  if ($("robot-round-pill")) $("robot-round-pill").textContent = "รอบที่: –";
+  if ($("robot-station-pill")) $("robot-station-pill").textContent = "สถานี: –";
+  if ($("robot-angle-pill")) $("robot-angle-pill").textContent = "มุมกล้อง: –";
+
+  for (let i = 1; i <= 5; i++) {
+    const el = $("robot-step-" + i);
+    if (el) {
+      el.classList.remove("is-done", "is-active");
+      el.classList.add("is-pending");
+    }
+  }
+}
+
+function renderRobot(data) {
+  if (!data) return renderRobotOffline();
+
+  const badge = $("robot-badge-status");
+  const dot = $("robot-status-dot");
+  const label = $("robot-status-label");
+  const isOnline = Boolean(data.online);
+
+  if (badge && dot && label) {
+    if (!isOnline) {
+      badge.className = "badge badge--neutral";
+      dot.className = "robot-pulse-dot robot-pulse-dot--neutral";
+      label.textContent = "ออฟไลน์";
+    } else {
+      const stateTone = {
+        idle: "ok",
+        moving: "info",
+        inspecting: "warn",
+        analyzing: "info",
+        returning: "info",
+        docked: "ok",
+        error: "danger",
+      }[data.state] || "ok";
+      badge.className = `badge badge--${stateTone}`;
+      dot.className = `robot-pulse-dot robot-pulse-dot--${stateTone}`;
+      label.textContent = data.state_label || (isOnline ? "พร้อมใช้งาน" : "ออฟไลน์");
+    }
+  }
+
+  const img = $("robot-cam-stream");
+  const fallback = $("robot-cam-fallback");
+  const fbTitle = $("robot-fallback-title");
+  const fbText = $("robot-fallback-text");
+  const chipLiveText = $("robot-chip-live-text");
+
+  if (img && fallback) {
+    if (!isOnline) {
+      img.hidden = true;
+      fallback.hidden = false;
+      if (fbTitle) fbTitle.textContent = "หุ่นยนต์ออฟไลน์";
+      if (fbText) fbText.textContent = "หุ่นยนต์หยุดส่งข้อมูลเกิน 45 วินาที สัญญาณภาพจะปรากฏเมื่อหุ่นยนต์กลับมาออนไลน์";
+      if (chipLiveText) chipLiveText.textContent = "⚪ ออฟไลน์";
+    } else if (!data.stream_url) {
+      img.hidden = true;
+      fallback.hidden = false;
+      if (fbTitle) fbTitle.textContent = "กล้องอยู่ในโหมดสแตนด์บาย";
+      if (fbText) fbText.textContent = "ยังไม่ได้เชื่อมต่อ URL สัญญาณภาพจากกล้อง ESP32-CAM";
+      if (chipLiveText) chipLiveText.textContent = "⚪ สแตนด์บาย";
+    } else if (robotStreamError) {
+      img.hidden = true;
+      fallback.hidden = false;
+      if (fbTitle) fbTitle.textContent = "สัญญาณภาพขัดข้อง";
+      if (fbText) fbText.textContent = "ไม่สามารถเชื่อมต่อกล้อง ESP32-CAM ได้ กรุณาตรวจสอบว่ากล้องเปิดอยู่และเชื่อมต่อ Wi-Fi วงเดียวกัน";
+      if (chipLiveText) chipLiveText.textContent = "⚪ สัญญาณหลุด";
+    } else {
+      fallback.hidden = true;
+      img.hidden = false;
+      if (currentStreamUrl !== data.stream_url) {
+        currentStreamUrl = data.stream_url;
+        img.setAttribute("src", data.stream_url);
+      }
+      if (chipLiveText) chipLiveText.textContent = "🔴 ถ่ายทอดสด";
+    }
+  }
+
+  const angleChip = $("robot-chip-angle");
+  const angleText = $("robot-chip-angle-text");
+  if (angleChip && angleText) {
+    if (data.camera_angle) {
+      angleChip.hidden = false;
+      angleText.textContent = `มุม: ${data.camera_angle_label || data.camera_angle}`;
+    } else {
+      angleChip.hidden = true;
+    }
+  }
+
+  const stationChip = $("robot-chip-station");
+  const stationText = $("robot-chip-station-text");
+  if (stationChip && stationText) {
+    const stName = data.station_name || (data.station_id ? `สถานี ${data.station_id}` : "");
+    if (stName) {
+      stationChip.hidden = false;
+      stationText.textContent = stName;
+    } else {
+      stationChip.hidden = true;
+    }
+  }
+
+  const batChip = $("robot-chip-battery");
+  const batText = $("robot-chip-battery-text");
+  if (batChip && batText) {
+    if (data.battery_pct != null) {
+      batChip.hidden = false;
+      batText.textContent = `${data.battery_pct}%`;
+    } else {
+      batChip.hidden = true;
+    }
+  }
+
+  const wifiChip = $("robot-chip-wifi");
+  const wifiText = $("robot-chip-wifi-text");
+  if (wifiChip && wifiText) {
+    if (data.wifi_rssi != null) {
+      wifiChip.hidden = false;
+      wifiText.textContent = `${data.wifi_rssi} dBm`;
+    } else {
+      wifiChip.hidden = true;
+    }
+  }
+
+  if ($("robot-current-step")) {
+    $("robot-current-step").textContent = data.step || "-";
+  }
+  if ($("robot-round-pill")) {
+    $("robot-round-pill").textContent = data.round_id ? `รอบที่: ${data.round_id}` : "รอบที่: –";
+  }
+  if ($("robot-station-pill")) {
+    const stName = data.station_name || (data.station_id ? `สถานี ${data.station_id}` : "–");
+    $("robot-station-pill").textContent = `สถานี: ${stName}`;
+  }
+  if ($("robot-angle-pill")) {
+    const ang = data.camera_angle ? (data.camera_angle_label || data.camera_angle) : "–";
+    $("robot-angle-pill").textContent = `มุมกล้อง: ${ang}`;
+  }
+
+  const activeStep = data.step_index || 1;
+  for (let i = 1; i <= 5; i++) {
+    const el = $("robot-step-" + i);
+    if (!el) continue;
+    el.classList.remove("is-done", "is-active", "is-pending");
+    if (!isOnline) {
+      el.classList.add("is-pending");
+    } else if (i < activeStep) {
+      el.classList.add("is-done");
+    } else if (i === activeStep) {
+      el.classList.add("is-active");
+    } else {
+      el.classList.add("is-pending");
+    }
+  }
+}
+
+function initRobotCam() {
+  const img = $("robot-cam-stream");
+  if (img) {
+    img.addEventListener("error", () => {
+      robotStreamError = true;
+      const fb = $("robot-cam-fallback");
+      if (fb) fb.hidden = false;
+      img.hidden = true;
+      const fbTitle = $("robot-fallback-title");
+      const fbText = $("robot-fallback-text");
+      const chipLive = $("robot-chip-live-text");
+      if (fbTitle) fbTitle.textContent = "สัญญาณภาพขัดข้อง";
+      if (fbText) fbText.textContent = "ไม่สามารถเชื่อมต่อกล้อง ESP32-CAM ได้ กรุณาตรวจสอบว่ากล้องเปิดอยู่และเชื่อมต่อ Wi-Fi วงเดียวกัน";
+      if (chipLive) chipLive.textContent = "⚪ ขัดข้อง";
+    });
+    img.addEventListener("load", () => {
+      robotStreamError = false;
+      img.hidden = false;
+      const fb = $("robot-cam-fallback");
+      if (fb) fb.hidden = true;
+      const chipLive = $("robot-chip-live-text");
+      if (chipLive) chipLive.textContent = "🔴 ถ่ายทอดสด";
+    });
+  }
+
+  const fsBtn = $("robot-cam-fs-btn");
+  if (fsBtn) {
+    fsBtn.addEventListener("click", () => {
+      const frame = $("robot-cam-frame");
+      if (!frame) return;
+      if (!document.fullscreenElement) {
+        if (frame.requestFullscreen) frame.requestFullscreen();
+        else if (frame.webkitRequestFullscreen) frame.webkitRequestFullscreen();
+      } else {
+        if (document.exitFullscreen) document.exitFullscreen();
+        else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+      }
+    });
+  }
+}
+
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) return stopTimers(); // no polling while the tab is hidden
+  if (document.hidden) {
+    stopTimers();
+    stopRobotTimer();
+    return;
+  }
   const age = Date.now() - state.fetchedAt;
   if (age >= REFRESH_MS) refresh();
   else schedule(REFRESH_MS - age);
   startTicker();
   render();
+  pollRobot();
 });
-window.addEventListener("online", () => refresh());
-$("retry-btn").addEventListener("click", () => refresh());
+window.addEventListener("online", () => {
+  refresh();
+  pollRobot();
+});
+$("retry-btn").addEventListener("click", () => {
+  refresh();
+  pollRobot();
+});
 
+initRobotCam();
 refresh();
+pollRobot();
 startTicker();

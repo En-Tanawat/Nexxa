@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.create_admin import MIN_PASSWORD_LEN
 from app.db import get_session
-from app.models import (AdminUser, AuditLog, Batch, Capture, Crop, DailyStat, DeviceKey, ProviderKey, Station)
+from app.models import (AdminUser, AppSetting, AuditLog, Batch, Capture, Crop, DailyStat, DeviceKey, ProviderKey, Station)
 from app.web import audit, deps, secretbox, security
 from app.web.templating import render
 
@@ -37,6 +37,7 @@ ACTION_TH = {
     "user.create": "สร้างผู้ดูแล", "user.password": "เปลี่ยนรหัสผ่าน", "user.delete": "ลบผู้ดูแล",
     "key.create": "สร้างคีย์ AI", "key.replace": "เปลี่ยนคีย์ AI", "key.toggle": "เปิด/ปิดคีย์ AI", "key.delete": "ลบคีย์ AI",
     "device.create": "สร้าง device key", "device.revoke": "ยกเลิก device key", "ai.update": "แก้ไขการตั้งค่า AI",
+    "setting.update": "แก้ไขการตั้งค่าระบบ",
 }
 
 
@@ -682,3 +683,43 @@ def audit_list(request: Request, page: str = "1", session: Session = Depends(get
     rows = [{"at": _thai_time(r.at), "actor": r.actor, "action": ACTION_TH.get(r.action, r.action), "target": r.target,
              "detail": r.detail or ""} for r in logs]
     return render(request, "admin/audit_list.html", rows=rows, page=number, pages=pages, total=total)
+
+
+# --- settings (robot stream url) ---------------------------------------------------
+
+@router.get("/settings")
+def settings_page(request: Request, session: Session = Depends(get_session)):
+    current_stream = session.scalar(select(AppSetting.value).where(AppSetting.key == "robot_stream_url")) or ""
+    return render(request, "admin/settings.html", values={"robot_stream_url": current_stream}, errors={})
+
+
+@router.post("/settings", dependencies=CSRF)
+def settings_save(
+    request: Request,
+    f: dict = _fields("robot_stream_url"),
+    admin: AdminUser = Depends(deps.require_admin),
+    session: Session = Depends(get_session),
+):
+    e: dict[str, str] = {}
+    url = f.get("robot_stream_url", "").strip()
+    if url:
+        if len(url) > 500:
+            e["robot_stream_url"] = "URL ยาวเกินไป (ไม่เกิน 500 ตัวอักษร)"
+        elif not (url.startswith("http://") or url.startswith("https://")):
+            e["robot_stream_url"] = "URL ต้องขึ้นต้นด้วย http:// หรือ https://"
+    if e:
+        return render(request, "admin/settings.html", status_code=422, values={"robot_stream_url": url}, errors=e)
+
+    row = session.get(AppSetting, "robot_stream_url")
+    if not url:
+        if row:
+            session.delete(row)
+    else:
+        if row is None:
+            session.add(AppSetting(key="robot_stream_url", value=url))
+        else:
+            row.value = url
+    audit.record(session, admin.username, "setting.update", "robot_stream_url", url or "(ค่าเริ่มต้น)")
+    session.commit()
+    return _done(request, "/admin/settings", "บันทึกการตั้งค่าแล้ว")
+
