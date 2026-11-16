@@ -1,0 +1,241 @@
+{%- extends "base_admin.html" -%}
+{%- set active = "robot" -%}
+{% block title %}สถานะหุ่นยนต์ ESP32{% endblock %}
+{% block content %}
+{{ c.page_header(
+    "สถานะหุ่นยนต์ ESP32",
+    eyebrow="ระบบฮาร์ดแวร์และการนำทาง",
+    text="ตรวจสอบสถานะการทำงาน แบตเตอรี่ สัญญาณ Wi-Fi ตำแหน่งการตรวจ และภาพสดจากกล้อง ESP32-CAM"
+) }}
+
+<div class="stat-grid" role="list">
+  <div class="card stat">
+    <span class="stat__top">
+      <span class="icon-tile">{{ c.icon("robot", 20) }}</span>
+      <span id="badge-online">
+        {%- if status.online %}
+          {{ c.badge("ok", "ออนไลน์") }}
+        {%- else %}
+          {{ c.badge("neutral", "ออฟไลน์") }}
+        {%- endif %}
+      </span>
+    </span>
+    <span class="stat__label">สถานะการเชื่อมต่อ</span>
+    <span class="stat__value" id="val-state">{{ status.state_label }}</span>
+    <span class="stat__sub" id="val-heartbeat">
+      {%- if status.online and heartbeat_age is not none %}
+        อัปเดตเมื่อ {{ heartbeat_age }} วินาทีที่แล้ว
+      {%- else %}
+        ขาดการติดต่อเกิน 45 วินาที
+      {%- endif %}
+    </span>
+  </div>
+
+  <div class="card stat">
+    <span class="stat__top">
+      <span class="icon-tile">{{ c.icon("battery", 20) }}</span>
+      <span id="badge-battery">
+        {%- if status.battery_pct is not none %}
+          {%- if status.battery_pct > 50 %}
+            {{ c.badge("ok", "ปกติ") }}
+          {%- elif status.battery_pct > 20 %}
+            {{ c.badge("warn", "ปานกลาง") }}
+          {%- else %}
+            {{ c.badge("danger", "ต่ำ") }}
+          {%- endif %}
+        {%- else %}
+          {{ c.badge("neutral", "ไม่มีข้อมูล") }}
+        {%- endif %}
+      </span>
+    </span>
+    <span class="stat__label">ระดับแบตเตอรี่</span>
+    <span class="stat__value" id="val-battery">
+      {%- if status.battery_pct is not none %}{{ status.battery_pct }}%{% else %}-{% endif %}
+    </span>
+    <span class="stat__sub">
+      <div class="progress" style="height: 6px; background: var(--color-surface-hover); border-radius: 3px; overflow: hidden; margin-top: 6px;">
+        <div id="bar-battery" style="width: {{ status.battery_pct or 0 }}%; height: 100%; background: {% if (status.battery_pct or 0) > 20 %}var(--color-primary){% else %}var(--color-danger){% endif %}; transition: width 0.3s ease;"></div>
+      </div>
+    </span>
+  </div>
+
+  <div class="card stat">
+    <span class="stat__top">
+      <span class="icon-tile">{{ c.icon("wifi", 20) }}</span>
+      <span id="badge-wifi">
+        {%- if status.wifi_rssi is not none %}
+          {%- if status.wifi_rssi >= -65 %}
+            {{ c.badge("ok", "สัญญาณดี") }}
+          {%- elif status.wifi_rssi >= -80 %}
+            {{ c.badge("warn", "สัญญาณปานกลาง") }}
+          {%- else %}
+            {{ c.badge("danger", "สัญญาณอ่อน") }}
+          {%- endif %}
+        {%- else %}
+          {{ c.badge("neutral", "ไม่มีข้อมูล") }}
+        {%- endif %}
+      </span>
+    </span>
+    <span class="stat__label">สัญญาณ Wi-Fi (RSSI)</span>
+    <span class="stat__value" id="val-wifi">
+      {%- if status.wifi_rssi is not none %}{{ status.wifi_rssi }} dBm{% else %}-{% endif %}
+    </span>
+    <span class="stat__sub" id="val-wifi-desc">ESP32 2.4 GHz Network</span>
+  </div>
+
+  <div class="card stat">
+    <span class="stat__top">
+      <span class="icon-tile">{{ c.icon("station", 20) }}</span>
+      <span id="badge-step">{{ c.badge("info", "ขั้นตอนที่ " ~ status.step_index ~ "/" ~ status.total_steps) }}</span>
+    </span>
+    <span class="stat__label">ตำแหน่งสถานีปัจจุบัน</span>
+    <span class="stat__value" id="val-station">
+      {{ status.station_name or "จุดพัก / แท่นชาร์จ" }}
+    </span>
+    <span class="stat__sub" id="val-angle">
+      {%- if status.camera_angle_label %}มุมกล้อง: {{ status.camera_angle_label }}{% else %}ไม่ได้เปิดกล้อง{% endif %}
+    </span>
+  </div>
+</div>
+
+<div class="grid-2" style="margin-top: 1.5rem;">
+  <!-- Live Stream Panel -->
+  {% call c.card("ภาพสดจากกล้อง ESP32-CAM", subtitle="สตรีมวิดีโอแบบ MJPEG จากหุ่นยนต์ขณะเคลื่อนที่หรือตรวจสอบ", icon="camera") %}
+  <div class="camera-stream-container" style="position: relative; background: var(--color-surface-hover); border-radius: var(--radius-md); overflow: hidden; min-height: 280px; display: flex; align-items: center; justify-content: center; text-align: center; border: 1px solid var(--color-border);">
+    {%- if status.stream_url %}
+    <img id="robot-live-stream" src="{{ status.stream_url }}" alt="ESP32-CAM Live Stream" style="width: 100%; height: auto; max-height: 400px; object-fit: contain; display: block;" onerror="this.style.display='none'; document.getElementById('stream-fallback').style.display='flex';">
+    <div id="stream-fallback" style="display: none; flex-direction: column; align-items: center; justify-content: center; padding: 2rem;">
+      <span class="icon-tile" style="margin-bottom: 0.75rem;">{{ c.icon("wifi-off", 32) }}</span>
+      <p style="font-weight: 500; margin: 0;">ไม่สามารถเชื่อมต่อสัญญาณภาพได้</p>
+      <p style="font-size: 0.875rem; color: var(--color-text-muted); margin: 0.25rem 0 0 0;">กรุณาตรวจสอบว่า ESP32 เปิดอยู่และอยู่ในวงเครือข่ายเดียวกัน ({{ status.stream_url }})</p>
+    </div>
+    {%- else %}
+    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 2.5rem;">
+      <span class="icon-tile" style="margin-bottom: 0.75rem;">{{ c.icon("camera", 32) }}</span>
+      <p style="font-weight: 500; margin: 0;">ยังไม่ได้กำหนด URL สตรีมกล้อง</p>
+      <p style="font-size: 0.875rem; color: var(--color-text-muted); margin: 0.25rem 0 1rem 0;">กำหนด URL สตรีมของ ESP32 ได้ที่หน้าตั้งค่าระบบ</p>
+      <a href="/admin/settings" class="btn btn--secondary btn--sm">{{ c.icon("settings", 16) }} <span>ไปที่หน้าตั้งค่า</span></a>
+    </div>
+    {%- endif %}
+    
+    <div class="stream-hud" style="position: absolute; bottom: 8px; left: 8px; right: 8px; display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.65); color: #fff; padding: 6px 12px; border-radius: var(--radius-sm); font-size: 0.8125rem; backdrop-filter: blur(4px);">
+      <span style="display: inline-flex; align-items: center; gap: 6px;">
+        <span class="live-dot" style="background: {% if status.online %}#22c55e{% else %}#94a3b8{% endif %};"></span>
+        <span id="hud-status">{% if status.online %}LIVE{% else %}OFFLINE{% endif %}</span>
+      </span>
+      <span id="hud-angle">{% if status.camera_angle_label %}มุม{{ status.camera_angle_label }}{% else %}-{% endif %}</span>
+    </div>
+  </div>
+  {% endcall %}
+
+  <!-- Step Pipeline & Diagnostic -->
+  <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+    {% call c.card("ขั้นตอนการตรวจรอบ (Inspection Pipeline)", subtitle="ขั้นตอน 5 สเต็ปของหุ่นยนต์อัตโนมัติ", icon="activity") %}
+    <ol class="steps" id="pipeline-steps">
+      <li class="steps__item{% if status.step_index > 1 %} is-done{% elif status.step_index == 1 and status.online %} is-active{% endif %}">
+        <span class="step-title">1. เตรียมความพร้อมและรับคำสั่ง</span>
+        <span class="step-desc">ตรวจสอบแบตเตอรี่ เซนเซอร์ และรอรอบการตรวจ</span>
+      </li>
+      <li class="steps__item{% if status.step_index > 2 %} is-done{% elif status.step_index == 2 and status.online %} is-active{% endif %}">
+        <span class="step-title">2. เดินทางไปยังสถานีและสแกน RFID</span>
+        <span class="step-desc">เคลื่อนที่ตามราง/เส้นทางและยืนยันตำแหน่งด้วยแท็ก RFID</span>
+      </li>
+      <li class="steps__item{% if status.step_index > 3 %} is-done{% elif status.step_index == 3 and status.online %} is-active{% endif %}">
+        <span class="step-title">3. บันทึกภาพใบผัก 4 มุมรอบต้น</span>
+        <span class="step-desc">ถ่ายภาพมุมหน้า มุมขวา มุมหลัง มุมซ้าย พร้อมประเมินคุณภาพภาพ</span>
+      </li>
+      <li class="steps__item{% if status.step_index > 4 %} is-done{% elif status.step_index == 4 and status.online %} is-active{% endif %}">
+        <span class="step-title">4. ส่งภาพและประมวลผลด้วย AI</span>
+        <span class="step-desc">ตรวจจับรอยโรค อาการขาดสารอาหาร และอัตราการเติบโต</span>
+      </li>
+      <li class="steps__item{% if status.step_index == 5 and status.online %} is-done{% endif %}">
+        <span class="step-title">5. สรุปผลและเดินทางกลับแท่นชาร์จ</span>
+        <span class="step-desc">บันทึก Daily Rollup และจอดพักที่แท่นชาร์จ</span>
+      </li>
+    </ol>
+    <div style="margin-top: 1rem; padding: 0.75rem 1rem; background: var(--color-surface-hover); border-radius: var(--radius-sm); font-size: 0.875rem;">
+      <strong>สถานะปัจจุบัน:</strong> <span id="pipeline-desc">{{ status.step }}</span>
+    </div>
+    {% endcall %}
+
+    <!-- Controls & Testing -->
+    {% call c.card("เครื่องมือทดสอบการทำงาน", subtitle="ส่งคำสั่งจำลองเพื่อทดสอบระบบและมอนิเตอร์", icon="refresh") %}
+    <p style="font-size: 0.875rem; color: var(--color-text-muted); margin-bottom: 1rem;">
+      คุณสามารถทดสอบส่งข้อมูลสถานะจำลอง (Simulate Telemetry) หรือรีเซ็ตสถานะมอนิเตอร์เพื่อตรวจสอบการแสดงผลบนหน้าจอ
+    </p>
+    <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+      <form method="post" action="/admin/robot/simulate" data-busy-form>
+        {{ c.csrf_field() }}
+        <button type="submit" class="btn btn--secondary btn--sm">
+          {{ c.icon("refresh", 16) }} <span>จำลองส่งข้อมูล Telemetry</span>
+        </button>
+      </form>
+      <form method="post" action="/admin/robot/reset" data-busy-form>
+        {{ c.csrf_field() }}
+        <button type="submit" class="btn btn--neutral btn--sm">
+          {{ c.icon("trash", 16) }} <span>รีเซ็ตสถานะเป็นค่าเริ่มต้น</span>
+        </button>
+      </form>
+      <a href="/admin/devices" class="btn btn--secondary btn--sm">
+        {{ c.icon("device", 16) }} <span>จัดการ Device Key</span>
+      </a>
+    </div>
+    {% endcall %}
+  </div>
+</div>
+
+<script>
+// Auto-polling telemetry every 4 seconds to update UI seamlessly
+(function() {
+  function pollRobot() {
+    fetch('/api/public/robot')
+      .then(res => res.json())
+      .then(data => {
+        if (!data) return;
+        const online = data.online;
+        const badgeOnline = document.getElementById('badge-online');
+        if (badgeOnline) {
+          badgeOnline.innerHTML = online 
+            ? '<span class="badge badge--ok"><span class="badge__dot" aria-hidden="true"></span>ออนไลน์</span>'
+            : '<span class="badge badge--neutral"><span class="badge__dot" aria-hidden="true"></span>ออฟไลน์</span>';
+        }
+        const valState = document.getElementById('val-state');
+        if (valState) valState.textContent = data.state_label || (online ? data.state : 'ออฟไลน์');
+
+        const valBattery = document.getElementById('val-battery');
+        const barBattery = document.getElementById('bar-battery');
+        if (valBattery && data.battery_pct !== null && data.battery_pct !== undefined) {
+          valBattery.textContent = data.battery_pct + '%';
+          if (barBattery) barBattery.style.width = data.battery_pct + '%';
+        }
+
+        const valWifi = document.getElementById('val-wifi');
+        if (valWifi && data.wifi_rssi !== null && data.wifi_rssi !== undefined) {
+          valWifi.textContent = data.wifi_rssi + ' dBm';
+        }
+
+        const valStation = document.getElementById('val-station');
+        if (valStation) {
+          valStation.textContent = data.station_name || (data.station_id ? 'สถานี ' + data.station_id : 'จุดพัก / แท่นชาร์จ');
+        }
+
+        const valAngle = document.getElementById('val-angle');
+        if (valAngle) {
+          valAngle.textContent = data.camera_angle_label ? 'มุมกล้อง: ' + data.camera_angle_label : 'ไม่ได้เปิดกล้อง';
+        }
+
+        const pipeDesc = document.getElementById('pipeline-desc');
+        if (pipeDesc) pipeDesc.textContent = data.step || '-';
+
+        const hudStatus = document.getElementById('hud-status');
+        if (hudStatus) hudStatus.textContent = online ? 'LIVE' : 'OFFLINE';
+
+        const hudAngle = document.getElementById('hud-angle');
+        if (hudAngle) hudAngle.textContent = data.camera_angle_label ? 'มุม' + data.camera_angle_label : '-';
+      })
+      .catch(() => {});
+  }
+  setInterval(pollRobot, 4000);
+})();
+</script>
+{% endblock %}

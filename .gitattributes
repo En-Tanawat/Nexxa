@@ -1,3 +1,19 @@
-# Vendored library bytes must never be newline-converted (their SHA-256 is recorded in VENDOR.md and tested).
+# Auto detect text files and normalize line endings to LF
+* text=auto eol=lf
+
+# Vendored library bytes must never be newline-converted (their SHA-256 is recorded in VENDOR.md and tested)
 *.min.js -text
 server/app/web/static/vendor/** -text
+
+# Binary formats
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.ico binary
+*.gif binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary

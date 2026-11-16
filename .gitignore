@@ -1,11 +1,40 @@
-scratch_research/
-server/eval/images/
-.superpowers/
-.env
-__pycache__/
-*.pyc
+# Python & Virtual Environments
 .venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.pytest_cache/
 .pytest_cache/
+
+# Databases & local uploads
 *.db
 server/data/
-docs/reference/
+server/eval/images/
+
+# Tests & Evaluation (do not push to git)
+tests/
+server/tests/
+server/eval/
+eval/
+
+# Documentation & Requirements (do not push to git)
+docs/
+Requirements/
+*.pdf
+requirements.txt
+server/requirements*.txt
+
+# AI Scratch, Research, Prompts, Evals, Tooling & Plans (remove all AI files from git)
+scratch_research/
+.superpowers/
+.claude/
+*.diff
+docs/superpowers/
+docs/screenshots/
+brain/
+*.prompt
+*.prompt.md
+
+# Secrets & Local Config
+.env
+.env.*

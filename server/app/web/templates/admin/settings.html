@@ -2,18 +2,69 @@
 {%- set active = "settings" -%}
 {% block title %}ตั้งค่าระบบ{% endblock %}
 {% block content %}
-{{ c.page_header("ตั้งค่าระบบ", eyebrow="การตั้งค่าทั่วไป", text="กำหนดค่าระบบเพิ่มเติม เช่น สตรีมกล้องของหุ่นยนต์") }}
+{{ c.page_header("ตั้งค่าระบบ", eyebrow="การตั้งค่าทั่วไปและจัดการข้อมูล", text="กำหนดค่าระบบโรงเรือน ฮาร์ดแวร์หุ่นยนต์ และเครื่องมือจำลองข้อมูล") }}
 
 {%- if errors %}{{ c.alert("danger", "มี " ~ errors | length ~ " ช่องที่ต้องแก้ไข ดูข้อความสีแดงใต้ช่อง", title="บันทึกไม่สำเร็จ", role="alert") }}{% endif %}
 
-<form class="form" method="post" action="/admin/settings" data-busy-form>
-  {{ c.csrf_field() }}
-  {% call c.card("การถ่ายทอดสดจากหุ่นยนต์ (Robot Live Stream)", subtitle="URL สำหรับดูภาพสดจากกล้อง ESP32-CAM ของหุ่นยนต์", icon="camera") %}
-  <div class="form-grid">
-    {{ c.field("robot_stream_url", "URL สตรีมกล้องหุ่นยนต์ (MJPEG Stream)", value=values["robot_stream_url"], error=errors.get("robot_stream_url"), required=false,
-               help="เช่น http://192.168.1.150:81/stream หรือปล่อยว่างไว้หากส่งผ่าน telemetry", attrs={"maxlength": 500, "autocomplete": "off"}) }}
+<div class="grid-2">
+  <div>
+    <form class="form" method="post" action="/admin/settings" data-busy-form>
+      {{ c.csrf_field() }}
+      {% call c.card("ข้อมูลโรงเรือนและระบบ", subtitle="ระบุรายละเอียดโรงเรือนสำหรับแสดงผลบนรายงานและแดชบอร์ด", icon="overview") %}
+      <div class="form-grid">
+        {{ c.field("greenhouse_name", "ชื่อโรงเรือน", value=values["greenhouse_name"], error=errors.get("greenhouse_name"), required=false,
+                   help="เช่น โรงเรือนทดลอง NEXXA 1", attrs={"maxlength": 100, "autocomplete": "off"}) }}
+        {{ c.field("greenhouse_location", "ที่ตั้งโรงเรือน", value=values["greenhouse_location"], error=errors.get("greenhouse_location"), required=false,
+                   help="เช่น อาคารวิจัยการเกษตรอัจฉริยะ โซน A", attrs={"maxlength": 200, "autocomplete": "off"}) }}
+        {{ c.field("alert_email", "อีเมลรับแจ้งเตือนปัญหา", value=values["alert_email"], error=errors.get("alert_email"), required=false,
+                   help="แจ้งเตือนเมื่อพบโรคพืชหรือหุ่นยนต์มีปัญหา", attrs={"maxlength": 100, "type": "email", "autocomplete": "off"}) }}
+      </div>
+      {% endcall %}
+
+      {% call c.card("การถ่ายทอดสดจากหุ่นยนต์ (Robot Live Stream)", subtitle="URL สำหรับดูภาพสดจากกล้อง ESP32-CAM ของหุ่นยนต์", icon="camera") %}
+      <div class="form-grid">
+        {{ c.field("robot_name", "ชื่อหุ่นยนต์ ESP32", value=values["robot_name"], error=errors.get("robot_name"), required=false,
+                   help="เช่น ESP32-CAM Rover Alpha", attrs={"maxlength": 100, "autocomplete": "off"}) }}
+        {{ c.field("robot_stream_url", "URL สตรีมกล้องหุ่นยนต์ (MJPEG Stream)", value=values["robot_stream_url"], error=errors.get("robot_stream_url"), required=false,
+                   help="เช่น http://192.168.1.150:81/stream หรือปล่อยว่างไว้หากส่งผ่าน telemetry", attrs={"maxlength": 500, "autocomplete": "off"}) }}
+      </div>
+      <div class="form-actions" style="margin-top: 1.25rem;">{{ c.button("บันทึกการตั้งค่า", icon="ok") }}</div>
+      {% endcall %}
+    </form>
   </div>
-  <div class="form-actions">{{ c.button("บันทึกการตั้งค่า", icon="ok") }}</div>
-  {% endcall %}
-</form>
+
+  <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+    <!-- Demo Data Management -->
+    {% call c.card("จัดการข้อมูลจำลอง (Demo Data)", subtitle="สร้างหรือล้างข้อมูลประวัติ 100 วันสำหรับการทดสอบ", icon="refresh") %}
+    <p style="font-size: 0.875rem; color: var(--color-text-muted); margin-bottom: 1rem;">
+      คุณสามารถสร้างข้อมูลการตรวจรอบและภาพจำลอง 4 มุมย้อนหลัง 100 วัน เพื่อดูสถิติ กราฟแนวโน้ม และการจำลอง 3D Twin หรือล้างข้อมูลทั้งหมดเมื่อต้องการเริ่มต้นใหม่
+    </p>
+    <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+      <form method="post" action="/admin/settings/seed-demo" data-busy-form>
+        {{ c.csrf_field() }}
+        <button type="submit" class="btn btn--secondary btn--sm">
+          {{ c.icon("refresh", 16) }} <span>สร้างข้อมูลจำลอง 100 วัน</span>
+        </button>
+      </form>
+      <form method="post" action="/admin/settings/clear-demo" data-busy-form onsubmit="return confirm('ยืนยันที่จะล้างข้อมูลจำลองทั้งหมดหรือไม่?');">
+        {{ c.csrf_field() }}
+        <button type="submit" class="btn btn--neutral btn--sm">
+          {{ c.icon("trash", 16) }} <span>ล้างข้อมูลจำลอง</span>
+        </button>
+      </form>
+    </div>
+    {% endcall %}
+
+    <!-- System Diagnostics -->
+    {% call c.card("ข้อมูลระบบและสถานะเซิร์ฟเวอร์", subtitle="สรุปข้อมูลทรัพยากรและการทำงานปัจจุบัน", icon="activity") %}
+    <ul class="status-list" role="list">
+      <li><span>สถานีตรวจทั้งหมด</span><strong>{{ sys_stats.stations if sys_stats is defined else '-' }} สถานี</strong></li>
+      <li><span>ล็อตผักในระบบ</span><strong>{{ sys_stats.batches if sys_stats is defined else '-' }} ล็อต ({{ sys_stats.crops if sys_stats is defined else '-' }} ชนิด)</strong></li>
+      <li><span>ภาพที่ตรวจแล้ว</span><strong>{{ sys_stats.captures if sys_stats is defined else '-' }} ภาพ</strong></li>
+      <li><span>คีย์ AI ที่บันทึก</span><strong>{{ sys_stats.ai_keys if sys_stats is defined else '-' }} คีย์</strong></li>
+      <li><span>อุปกรณ์ที่ผูกในระบบ</span><strong>{{ sys_stats.devices if sys_stats is defined else '-' }} เครื่อง</strong></li>
+    </ul>
+    {% endcall %}
+  </div>
+</div>
 {% endblock %}

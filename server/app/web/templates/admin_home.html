@@ -5,6 +5,7 @@
 {{ c.page_header("ภาพรวมระบบ", eyebrow="สวัสดี " ~ admin.username, text="สรุปสิ่งที่ตั้งค่าไว้ในระบบ NEXXA เลือกการ์ดเพื่อไปจัดการแต่ละส่วน") }}
 
 {%- set cards = [
+  ("robot", "/admin/robot", "หุ่นยนต์ ESP32", (robot_status.state_label if robot_status is defined and robot_status.online else "หุ่นยนต์ ESP32"), ("ออนไลน์ · แบตเตอรี่ " ~ robot_status.battery_pct ~ "%" if (robot_status is defined and robot_status.online and robot_status.battery_pct is not none) else ("ออนไลน์" if (robot_status is defined and robot_status.online) else "สถานะ: ออฟไลน์"))),
   ("station", "/admin/stations", "สถานีตรวจ", stats.stations, "เปิดใช้งาน " ~ stats.stations_active ~ " สถานี"),
   ("batch", "/admin/batches", "ล็อตผัก", stats.batches, "กำลังปลูก " ~ stats.batches_growing ~ " ล็อต"),
   ("key", "/admin/keys", "คีย์ AI", stats.ai_keys, "เปิดใช้งาน " ~ stats.ai_keys_active ~ " คีย์"),
@@ -19,7 +20,7 @@
         <span class="stat__go">{{ c.icon("arrow-right", 18) }}<span class="sr-only">จัดการ{{ label }}</span></span>
       </span>
       <span class="stat__label">{{ label }}</span>
-      <span class="stat__value">{{ value }}</span>
+      <span class="stat__value" style="font-size: 1.5rem;">{{ value }}</span>
       <span class="stat__sub">{{ sub }}</span>
     </a>
   </li>
@@ -27,11 +28,18 @@
 </ul>
 
 <div class="grid-2">
-  {% call c.card("สถานะระบบ", subtitle="การตั้งค่าความปลอดภัยฝั่งเซิร์ฟเวอร์", icon="activity") %}
+  {% call c.card("สถานะระบบ", subtitle="การตั้งค่าความปลอดภัยและฮาร์ดแวร์ฝั่งเซิร์ฟเวอร์", icon="activity") %}
   <ul class="status-list" role="list">
     <li><span>การเข้าสู่ระบบและ session</span>{{ c.badge("ok", "พร้อมใช้งาน") }}</li>
     <li><span>การเข้ารหัสคีย์ AI</span>
       {%- if secrets_enabled %}{{ c.badge("ok", "เปิดใช้งาน") }}{% else %}{{ c.badge("warn", "ปิด · ตั้ง NEXXA_SECRET_KEY") }}{% endif %}</li>
+    <li><span>สถานะหุ่นยนต์ ESP32</span>
+      {%- if robot_status is defined and robot_status.online %}
+        {{ c.badge("ok", "ออนไลน์ (" ~ (robot_status.battery_pct or 0) ~ "%)") }}
+      {%- else %}
+        {{ c.badge("neutral", "ออฟไลน์") }}
+      {%- endif %}
+    </li>
     <li><span>คีย์ AI ที่เปิดใช้งาน</span>
       {%- if stats.ai_keys_active %}{{ c.badge("ok", stats.ai_keys_active ~ " คีย์") }}{% else %}{{ c.badge("neutral", "ยังไม่มี") }}{% endif %}</li>
     <li><span>อุปกรณ์ที่เชื่อมต่อได้</span>
@@ -49,6 +57,8 @@
       {%- if stats.ai_keys_active %}{{ c.badge("ok", "เสร็จแล้ว") }}{% endif %}</li>
     <li class="steps__item{% if stats.devices %} is-done{% endif %}"><a href="/admin/devices">สร้าง device key ให้หุ่นยนต์</a>
       {%- if stats.devices %}{{ c.badge("ok", "เสร็จแล้ว") }}{% endif %}</li>
+    <li class="steps__item{% if robot_status is defined and robot_status.online %} is-done{% endif %}"><a href="/admin/robot">ตรวจสอบสถานะและกล้องหุ่นยนต์ ESP32</a>
+      {%- if robot_status is defined and robot_status.online %}{{ c.badge("ok", "ออนไลน์") }}{% endif %}</li>
   </ol>
   {% endcall %}
 </div>

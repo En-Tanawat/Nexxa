@@ -5,6 +5,7 @@ the typed values (HTTP 422); successful writes redirect (POST-redirect-GET) with
 """
 import math
 import re
+import time
 from datetime import date, timedelta
 
 from typing import Annotated
@@ -15,9 +16,11 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app import seed_demo
 from app.create_admin import MIN_PASSWORD_LEN
 from app.db import get_session
-from app.models import (AdminUser, AppSetting, AuditLog, Batch, Capture, Crop, DailyStat, DeviceKey, ProviderKey, Station)
+from app.models import (AdminUser, AppSetting, AuditLog, Batch, Capture, Crop, DailyStat, DeviceKey, ProviderKey, Round, Station)
+from app.robot import robot as robot_monitor
 from app.web import audit, deps, secretbox, security
 from app.web.templating import render
 
@@ -37,7 +40,8 @@ ACTION_TH = {
     "user.create": "สร้างผู้ดูแล", "user.password": "เปลี่ยนรหัสผ่าน", "user.delete": "ลบผู้ดูแล",
     "key.create": "สร้างคีย์ AI", "key.replace": "เปลี่ยนคีย์ AI", "key.toggle": "เปิด/ปิดคีย์ AI", "key.delete": "ลบคีย์ AI",
     "device.create": "สร้าง device key", "device.revoke": "ยกเลิก device key", "ai.update": "แก้ไขการตั้งค่า AI",
-    "setting.update": "แก้ไขการตั้งค่าระบบ",
+    "setting.update": "แก้ไขการตั้งค่าระบบ", "robot.simulate": "จำลองส่งข้อมูลหุ่นยนต์", "robot.reset": "รีเซ็ตสถานะหุ่นยนต์",
+    "demo.seed": "สร้างข้อมูลจำลองฤดูกาล", "demo.clear": "ล้างข้อมูลจำลอง",
 }
 
 
@@ -163,7 +167,8 @@ def admin_home(request: Request, session: Session = Depends(get_session)):
         "ai_keys_active": count(select(func.count(ProviderKey.id)).where(ProviderKey.active)),
         "devices": count(select(func.count(DeviceKey.id)).where(DeviceKey.revoked_at.is_(None))),
     }
-    return render(request, "admin_home.html", stats=stats, secrets_enabled=secretbox.secrets_enabled())
+    robot_status = robot_monitor.get_robot_status(session)
+    return render(request, "admin_home.html", stats=stats, secrets_enabled=secretbox.secrets_enabled(), robot_status=robot_status)
 
 
 # --- stations ---------------------------------------------------------------------------
@@ -685,18 +690,91 @@ def audit_list(request: Request, page: str = "1", session: Session = Depends(get
     return render(request, "admin/audit_list.html", rows=rows, page=number, pages=pages, total=total)
 
 
-# --- settings (robot stream url) ---------------------------------------------------
+# --- robot status & monitor --------------------------------------------------------
+
+@router.get("/robot")
+def robot_page(request: Request, session: Session = Depends(get_session)):
+    status = robot_monitor.get_robot_status(session)
+    now = time.time()
+    heartbeat_age = int(now - status["updated_at"]) if status["updated_at"] > 0 else None
+    recent_rounds = session.scalars(select(Round).order_by(Round.id.desc()).limit(5)).all()
+    stations = session.scalars(select(Station).where(Station.active).order_by(Station.route_order, Station.id)).all()
+    return render(
+        request,
+        "admin/robot.html",
+        status=status,
+        heartbeat_age=heartbeat_age,
+        recent_rounds=recent_rounds,
+        stations=stations,
+    )
+
+
+@router.post("/robot/simulate", dependencies=CSRF)
+def robot_simulate(
+    request: Request,
+    admin: AdminUser = Depends(deps.require_admin),
+    session: Session = Depends(get_session),
+):
+    first_st = session.scalars(select(Station).where(Station.kind != "home", Station.active).order_by(Station.route_order)).first()
+    data = {
+        "state": "inspecting",
+        "station_id": first_st.id if first_st else 1,
+        "camera_angle": "front",
+        "step": f"กำลังตรวจสุขภาพผักสถานี {first_st.name if first_st else '1'} (จำลองการทดสอบ)",
+        "step_index": 3,
+        "battery_pct": 92,
+        "wifi_rssi": -55,
+    }
+    robot_monitor.update_telemetry(session, data)
+    audit.record(session, admin.username, "robot.simulate", "ESP32", "ทดสอบจำลองส่งข้อมูลสถานะหุ่นยนต์")
+    session.commit()
+    return _done(request, "/admin/robot", "จำลองส่งข้อมูลสถานะหุ่นยนต์เรียบร้อยแล้ว")
+
+
+@router.post("/robot/reset", dependencies=CSRF)
+def robot_reset(
+    request: Request,
+    admin: AdminUser = Depends(deps.require_admin),
+    session: Session = Depends(get_session),
+):
+    robot_monitor.reset()
+    audit.record(session, admin.username, "robot.reset", "ESP32", "รีเซ็ตสถานะหุ่นยนต์เป็นค่าเริ่มต้น")
+    session.commit()
+    return _done(request, "/admin/robot", "รีเซ็ตสถานะหุ่นยนต์เรียบร้อยแล้ว")
+
+
+# --- settings & demo data ----------------------------------------------------------
+
+SETTING_KEYS = ("robot_stream_url", "robot_name", "greenhouse_name", "greenhouse_location", "alert_email")
+
 
 @router.get("/settings")
 def settings_page(request: Request, session: Session = Depends(get_session)):
-    current_stream = session.scalar(select(AppSetting.value).where(AppSetting.key == "robot_stream_url")) or ""
-    return render(request, "admin/settings.html", values={"robot_stream_url": current_stream}, errors={})
+    settings_rows = session.scalars(select(AppSetting).where(AppSetting.key.in_(SETTING_KEYS))).all()
+    stored = {row.key: row.value for row in settings_rows}
+    values = {
+        "robot_stream_url": stored.get("robot_stream_url") or "",
+        "robot_name": stored.get("robot_name") or "ESP32-CAM Rover Alpha",
+        "greenhouse_name": stored.get("greenhouse_name") or "โรงเรือนทดลอง NEXXA",
+        "greenhouse_location": stored.get("greenhouse_location") or "อาคารวิจัยการเกษตรอัจฉริยะ",
+        "alert_email": stored.get("alert_email") or "",
+    }
+    count = session.scalar
+    sys_stats = {
+        "stations": count(select(func.count(Station.id))),
+        "batches": count(select(func.count(Batch.id))),
+        "crops": count(select(func.count(Crop.id))),
+        "captures": count(select(func.count(Capture.id))),
+        "ai_keys": count(select(func.count(ProviderKey.id))),
+        "devices": count(select(func.count(DeviceKey.id))),
+    }
+    return render(request, "admin/settings.html", values=values, errors={}, sys_stats=sys_stats)
 
 
 @router.post("/settings", dependencies=CSRF)
 def settings_save(
     request: Request,
-    f: dict = _fields("robot_stream_url"),
+    f: dict = _fields(*SETTING_KEYS),
     admin: AdminUser = Depends(deps.require_admin),
     session: Session = Depends(get_session),
 ):
@@ -707,19 +785,71 @@ def settings_save(
             e["robot_stream_url"] = "URL ยาวเกินไป (ไม่เกิน 500 ตัวอักษร)"
         elif not (url.startswith("http://") or url.startswith("https://")):
             e["robot_stream_url"] = "URL ต้องขึ้นต้นด้วย http:// หรือ https://"
-    if e:
-        return render(request, "admin/settings.html", status_code=422, values={"robot_stream_url": url}, errors=e)
 
-    row = session.get(AppSetting, "robot_stream_url")
-    if not url:
-        if row:
-            session.delete(row)
-    else:
-        if row is None:
-            session.add(AppSetting(key="robot_stream_url", value=url))
+    _text(e, "robot_name", f.get("robot_name", ""), "ชื่อหุ่นยนต์", 100, required=False)
+    _text(e, "greenhouse_name", f.get("greenhouse_name", ""), "ชื่อโรงเรือน", 100, required=False)
+    _text(e, "greenhouse_location", f.get("greenhouse_location", ""), "ที่ตั้งโรงเรือน", 200, required=False)
+    email = f.get("alert_email", "").strip()
+    if email and "@" not in email:
+        e["alert_email"] = "รูปแบบอีเมลไม่ถูกต้อง"
+
+    if e:
+        count = session.scalar
+        sys_stats = {
+            "stations": count(select(func.count(Station.id))),
+            "batches": count(select(func.count(Batch.id))),
+            "crops": count(select(func.count(Crop.id))),
+            "captures": count(select(func.count(Capture.id))),
+            "ai_keys": count(select(func.count(ProviderKey.id))),
+            "devices": count(select(func.count(DeviceKey.id))),
+        }
+        return render(request, "admin/settings.html", status_code=422, values=f, errors=e, sys_stats=sys_stats)
+
+    for k in SETTING_KEYS:
+        val = f.get(k, "").strip()
+        row = session.get(AppSetting, k)
+        if not val:
+            if row:
+                session.delete(row)
         else:
-            row.value = url
-    audit.record(session, admin.username, "setting.update", "robot_stream_url", url or "(ค่าเริ่มต้น)")
+            if row is None:
+                session.add(AppSetting(key=k, value=val))
+            else:
+                row.value = val
+
+    audit.record(session, admin.username, "setting.update", "system", "บันทึกการตั้งค่าระบบ")
     session.commit()
-    return _done(request, "/admin/settings", "บันทึกการตั้งค่าแล้ว")
+    return _done(request, "/admin/settings", "บันทึกการตั้งค่าระบบแล้ว")
+
+
+@router.post("/settings/seed-demo", dependencies=CSRF)
+def settings_seed_demo(
+    request: Request,
+    admin: AdminUser = Depends(deps.require_admin),
+    session: Session = Depends(get_session),
+):
+    try:
+        seed_demo.run(session, days=100, force=True)
+        audit.record(session, admin.username, "demo.seed", "100-day", "สร้างข้อมูลจำลองฤดูกาล 100 วัน")
+        session.commit()
+        return _done(request, "/admin/settings", "สร้างข้อมูลจำลองฤดูกาล 100 วันเรียบร้อยแล้ว")
+    except Exception as ex:
+        session.rollback()
+        return _done(request, "/admin/settings", f"เกิดข้อผิดพลาดในการสร้างข้อมูล: {ex}")
+
+
+@router.post("/settings/clear-demo", dependencies=CSRF)
+def settings_clear_demo(
+    request: Request,
+    admin: AdminUser = Depends(deps.require_admin),
+    session: Session = Depends(get_session),
+):
+    try:
+        seed_demo.clear(session)
+        audit.record(session, admin.username, "demo.clear", "demo", "ล้างข้อมูลจำลองทั้งหมด")
+        session.commit()
+        return _done(request, "/admin/settings", "ล้างข้อมูลจำลองเรียบร้อยแล้ว")
+    except Exception as ex:
+        session.rollback()
+        return _done(request, "/admin/settings", f"เกิดข้อผิดพลาดในการล้างข้อมูล: {ex}")
 
