@@ -1,4 +1,6 @@
+import logging
 from contextlib import asynccontextmanager
+from datetime import date
 
 from fastapi import Depends, FastAPI, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
@@ -6,17 +8,30 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import analyzer, runtime_config, storage
+from app import analyzer, runtime_config, stats, storage
 from app.config import settings
 from app.db import engine, get_session, init_db
 from app.models import Analysis, Capture, Crop, Round, Station
 from app.quality import ImageDecodeError, check_quality
 from app.seed import seed
-from app.web import deps, routes_admin, routes_auth, routes_keys
+from app.web import deps, routes_admin, routes_auth, routes_keys, routes_public_api
 from app.web.templating import STATIC_DIR
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 MULTIPART_OVERHEAD = 64 * 1024  # form fields + boundaries on top of the image
+log = logging.getLogger(__name__)
+
+
+def safe_rollup(session: Session, day: date | None = None, station_id: int | None = None) -> None:
+    """Stats must never break startup or a capture: swallow, log the exception type only (no values)."""
+    try:
+        stats.rollup(session, day, station_id)
+    except Exception as e:
+        log.warning("stats rollup failed: %s", type(e).__name__)
+        try:
+            session.rollback()
+        except Exception:
+            pass
 
 
 @asynccontextmanager
@@ -25,6 +40,8 @@ async def lifespan(app: FastAPI):
     analyzer.check_vision_config()
     with Session(engine) as s:
         seed(s)
+    with Session(engine) as s:
+        safe_rollup(s)  # catch-up: fill days that have captures but no daily_stats yet
     yield
 
 
@@ -74,6 +91,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 app.include_router(routes_auth.router)
 app.include_router(routes_admin.router)
 app.include_router(routes_keys.router)
+app.include_router(routes_public_api.router)
 app.add_exception_handler(deps.CsrfError, routes_auth.csrf_error_page)
 
 
@@ -133,6 +151,7 @@ def create_capture(
     )
     session.add(capture)
     session.flush()
+    day = capture.taken_at.date()
     capture.image_path = storage.save_image(data, round_id, station.id, capture.id)
 
     label = confidence = None
@@ -147,4 +166,6 @@ def create_capture(
         label, confidence = result.label, result.confidence
         status = "needs_review" if result.needs_review else "analyzed"
     session.commit()
-    return {"capture_id": capture.id, "status": status, "label": label, "confidence": confidence, "attempt": attempt}
+    body = {"capture_id": capture.id, "status": status, "label": label, "confidence": confidence, "attempt": attempt}
+    safe_rollup(session, day, station.id)  # one upsert for this day/station; failure is swallowed
+    return body
