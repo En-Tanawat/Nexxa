@@ -44,3 +44,12 @@ def last4(value: str) -> str:
 
 def mask(last4: str) -> str:
     return "••••••••" + last4
+
+
+def can_decrypt(token) -> bool:
+    """True when the stored blob opens with the current NEXXA_SECRET_KEY; never raises, never returns the value."""
+    try:
+        decrypt(token)
+        return True
+    except Exception:  # disabled, wrong key, corrupted, wrong type
+        return False

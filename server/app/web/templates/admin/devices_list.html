@@ -32,6 +32,7 @@
 {%- if errors %}{{ c.alert("danger", "มี " ~ errors | length ~ " ช่องที่ต้องแก้ไข ดูข้อความสีแดงใต้ช่อง", title="สร้างคีย์ไม่สำเร็จ", role="alert") }}{% endif %}
 <form class="form" method="post" action="/admin/devices" data-busy-form>
   {{ c.csrf_field() }}
+  <input type="hidden" name="nonce" value="{{ nonce }}">
   {% call c.card("สร้าง device key ใหม่", subtitle="คีย์จะแสดงครั้งเดียวในหน้าถัดไป เตรียมคัดลอกไปใส่ในหุ่นยนต์", icon="device") %}
   <div class="form-grid">
     {{ c.field("label", "ชื่ออุปกรณ์", value=values["label"], error=errors.get("label"), required=true,

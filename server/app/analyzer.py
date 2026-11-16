@@ -51,9 +51,15 @@ def _fail(note: str, model: str | None = None) -> AnalysisResult:
 
 
 def _cause(e: Exception) -> str:
-    """Exception class (+ HTTP status) for stored notes; the full text stays in the log only."""
+    """Exception class (+ HTTP status) for stored notes."""
     code = getattr(e, "status_code", None)
     return f"{type(e).__name__} {code}" if code else type(e).__name__
+
+
+def _log_cause(e: Exception) -> str:
+    """What we log for a provider error: never str(e) or a traceback, provider bodies can echo (masked) keys."""
+    rid = getattr(e, "request_id", None)
+    return _cause(e) + (f" request_id={str(rid)[:64]}" if rid else "")
 
 
 def check_vision_config() -> None:
@@ -125,7 +131,7 @@ def _analyze_anthropic(image_bytes: bytes, media_type: str, crop: Crop, prompt: 
             }],
         )
     except (anthropic.AnthropicError, TypeError) as e:  # TypeError: SDK raises it for a missing API key
-        log.exception("Claude API call failed")
+        log.error("Claude API call failed: %s", _log_cause(e))
         return _fail(f"เรียก Claude ไม่สำเร็จ ({_cause(e)})", requested)
     model = getattr(resp, "model", None) or requested  # may differ after a server-side fallback
     if resp.stop_reason == "refusal":  # check before touching content
@@ -147,6 +153,13 @@ def _analyze_openai_compat(image_bytes, media_type, crop, prompt, client, provid
     if not model:
         log.error("NEXXA_VISION_MODEL is not set (provider %s)", provider.name)
         return _fail(f"ยังไม่ได้ตั้งชื่อรุ่น (หน้าตั้งค่า AI หรือ NEXXA_VISION_MODEL) สำหรับผู้ให้บริการ {provider.name}", provider.name)
+    db_url = runtime_config.get_setting(runtime_config.VISION_BASE_URL)
+    # checked again at use time: a stale DB value (opt-in since removed, edited by hand) must never receive the key
+    if db_url and runtime_config.base_url_error(db_url, provider.name):
+        log.error("base URL set in the web UI is not allowed for %s (not an official host and "
+                  "NEXXA_ALLOW_CUSTOM_BASE_URL is not set, or unsafe); the key was not sent", provider.name)
+        return _fail(f"base URL ในหน้าตั้งค่า AI ใช้กับ {provider.name} ไม่ได้ (ไม่ใช่โดเมนทางการหรือไม่ปลอดภัย และเซิร์ฟเวอร์"
+                     " ไม่ได้ตั้ง NEXXA_ALLOW_CUSTOM_BASE_URL=1) จึงไม่ได้ส่งคีย์", model)
     instruction = ('\nตอบเป็น JSON object เดียวเท่านั้น รูปแบบ {"label": ..., "confidence": 0-1, "note": ...} '
                    "ห้ามมีข้อความอื่น")
     data_uri = f"data:{media_type};base64,{base64.standard_b64encode(image_bytes).decode()}"
@@ -157,7 +170,7 @@ def _analyze_openai_compat(image_bytes, media_type, crop, prompt, client, provid
                 log.error("%s is not set (provider %s)", provider.key_env, provider.name)
                 return _fail(f"ยังไม่มีคีย์ (หน้าคีย์ AI หรือ {provider.key_env}) สำหรับผู้ให้บริการ {provider.name}", model)
             try:
-                client = openai.OpenAI(api_key=key, base_url=runtime_config.vision_base_url() or provider.base_url,
+                client = openai.OpenAI(api_key=key, base_url=db_url or settings.vision_base_url or provider.base_url,
                                        timeout=60, max_retries=1)
             except Exception as e:  # e.g. httpx InvalidURL for a malformed base url; not an OpenAIError
                 # type only, no traceback: the message can echo the base url / credentials
@@ -175,7 +188,7 @@ def _analyze_openai_compat(image_bytes, media_type, crop, prompt, client, provid
             ]}],
         )
     except (openai.OpenAIError, TypeError) as e:
-        log.exception("%s API call failed", provider.name)
+        log.error("%s API call failed: %s", provider.name, _log_cause(e))
         return _fail(f"เรียก {provider.name} ไม่สำเร็จ ({_cause(e)})", model)
     model = getattr(resp, "model", None) or model
     try:

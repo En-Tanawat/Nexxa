@@ -155,7 +155,8 @@ def test_sdk_failure_logged_not_raised(crop, caplog, error):
     with caplog.at_level(logging.ERROR, logger="app.analyzer"):
         r = run(crop, FakeOpenAI(error=error))
     assert_failed(r)
-    assert any(rec.exc_info for rec in caplog.records)
+    assert type(error).__name__ in caplog.text  # type only: SDK messages/bodies can echo key material
+    assert not any(rec.exc_info for rec in caplog.records)
 
 
 def test_unparseable_reply_logged(crop, caplog):
@@ -240,7 +241,8 @@ def test_failure_note_is_sanitised(crop, caplog):
     assert_failed(r)
     assert "RateLimitError" in r.note and "429" in r.note
     assert "secret detail" not in r.note and SECRET not in r.note
-    assert "secret detail" in caplog.text  # full text stays in the log only
+    assert "RateLimitError 429" in caplog.text
+    assert "secret detail" not in caplog.text and SECRET not in caplog.text  # provider bodies can echo keys
 
 
 def test_clients_built_with_one_retry_and_60s(crop, monkeypatch):

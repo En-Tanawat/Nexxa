@@ -6,6 +6,8 @@ import re
 import secrets
 from types import SimpleNamespace
 
+import httpx2 as httpx
+import openai
 import pytest
 from cryptography.fernet import Fernet
 from sqlalchemy import create_engine, func, inspect, select, text
@@ -21,7 +23,7 @@ from tests.test_api import GOOD
 from tests.test_web_auth import _A11y, _client, _csrf, _login, admin, engine  # noqa: F401
 
 VISION_ENV = ("NEXXA_VISION_PROVIDER", "NEXXA_VISION_MODEL", "NEXXA_VISION_BASE_URL", "NEXXA_DEVICE_KEY",
-              "NEXXA_ALLOW_INSECURE_BASE_URL", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY",
+              "NEXXA_ALLOW_INSECURE_BASE_URL", "NEXXA_ALLOW_CUSTOM_BASE_URL", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY",
               "DEEPSEEK_API_KEY", "DASHSCOPE_API_KEY")
 
 
@@ -172,19 +174,38 @@ def test_full_key_never_leaks_anywhere(c, secrets_on, caplog, monkeypatch):
         pages.append(resp.text)
         pages.append(json.dumps(dict(resp.headers)))
         cookies.append(security.read_session(c.cookies.get("nexxa_session")))
-    # the analyzer path with the stored key: a failing client must not log it either
+    # the analyzer path with the stored key: exceptions that echo the key must not reach logs or notes
     seen = []
 
     def boom(**kw):
         seen.append(kw)
-        raise ValueError("cannot build client")
+        raise ValueError(f"bad {kw['api_key']}")
 
     monkeypatch.setattr("app.analyzer.openai.OpenAI", boom)
     crop = Crop(name="x", labels=["ปกติ"], prompt="p", notes=None)
-    note = analyzer.analyze_leaf(GOOD, crop).note
+    notes = [analyzer.analyze_leaf(GOOD, crop).note]
     assert seen and seen[0]["api_key"] == replaced
+
+    class EchoingClient:  # a provider 401 whose body echoes the key back
+        def __init__(self, **kw):
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=lambda **_: self._fail(kw["api_key"])))
+
+        def _fail(self, k):
+            req = httpx.Request("POST", "https://api.deepseek.com")
+            resp = httpx.Response(401, request=req, headers={"x-request-id": "req_leakcheck1"})
+            raise openai.AuthenticationError(f"Incorrect API key provided: {k}", response=resp, body={"key": k})
+
+    monkeypatch.setattr("app.analyzer.openai.OpenAI", EchoingClient)
+    caplog_before = caplog.text
+    caplog.clear()
+    result = analyzer.analyze_leaf(GOOD, crop)
+    notes.append(result.note)
+    assert "AuthenticationError 401" in result.note and "AuthenticationError 401" in caplog.text
+    assert "req_leakcheck1" in caplog.text  # a request id is enough to trace it with the provider
     pages.append(post(c, f"/admin/keys/{kid}/delete").text)
-    blob = "\n".join(pages + [json.dumps(cookies, ensure_ascii=False), caplog.text, note, db_dump(secrets_on)])
+    audit_blob = " ".join(f"{a.target} {a.detail}" for a in rows(secrets_on, AuditLog))
+    blob = "\n".join(pages + notes + [json.dumps(cookies, ensure_ascii=False), caplog_before, caplog.text, audit_blob,
+                                      db_dump(secrets_on)])
     for k in (key, replaced):
         assert_no_leak(k, blob)
 
@@ -352,16 +373,16 @@ def capture_openai(monkeypatch):
 
 def test_ai_settings_drive_the_analyzer_and_clearing_returns_to_env(c, secrets_on, monkeypatch, crop):
     key = add_key(c, "deepseek", "ds")
-    r = post(c, "/admin/ai", provider="deepseek", model="deepseek-vision-x", base_url="https://proxy.example.com/v1")
+    r = post(c, "/admin/ai", provider="deepseek", model="deepseek-vision-x", base_url="https://api.deepseek.com/v1")
     assert r.status_code == 303 and r.headers["location"] == "/admin/ai"
     built = capture_openai(monkeypatch)
     result = analyzer.analyze_leaf(GOOD, crop)
     assert result.label == "ปกติ" and result.model == "deepseek-vision-x"
     kw, client = built[-1]
-    assert kw["api_key"] == key and kw["base_url"] == "https://proxy.example.com/v1"
+    assert kw["api_key"] == key and kw["base_url"] == "https://api.deepseek.com/v1"
     assert client.calls[0]["model"] == "deepseek-vision-x"
     page = c.get("/admin/ai").text
-    assert "deepseek-vision-x" in page and "https://proxy.example.com/v1" in page
+    assert "deepseek-vision-x" in page and "https://api.deepseek.com/v1" in page
 
     # empty base URL = the provider's own default
     post(c, "/admin/ai", provider="deepseek", model="deepseek-vision-x", base_url="")
@@ -382,7 +403,10 @@ def test_ai_settings_drive_the_analyzer_and_clearing_returns_to_env(c, secrets_o
     assert client.calls[0]["model"] == "env-model" and result.model == "env-model"
     actions = [a.action for a in rows(secrets_on, AuditLog)]
     assert actions.count("ai.update") == 3
-    assert all(a.detail is None or "proxy.example.com" not in a.detail for a in rows(secrets_on, AuditLog))
+    details = [a.detail or "" for a in rows(secrets_on, AuditLog) if a.action == "ai.update"]
+    assert "https://api.deepseek.com/v1" in details[0] and "deepseek-vision-x" in details[0]  # where keys go is traceable
+    for k in (key, env_key):
+        assert_no_leak(k, " ".join(details))
 
 
 def test_anthropic_uses_web_key_and_model_else_sdk_env(c, secrets_on, monkeypatch, crop):
@@ -437,9 +461,22 @@ def test_readiness_cards(c, secrets_on, monkeypatch):
     cards = dict(re.findall(r'data-provider="(\w+)" data-ready="(\w+)"', page))
     assert cards == {"anthropic": "no", "openai": "yes", "gemini": "no", "qwen": "no", "deepseek": "no"}
     assert "พร้อมใช้งาน" in page and "ยังไม่มีคีย์" in page and "การเข้ารหัสคีย์" in page
-    monkeypatch.setenv("ANTHROPIC_API_KEY", fake_key("sk-ant-ENV-"))  # env key + built-in default model
+    # a provider that is not selected is never "ready", even with a key; it says so with its own state
+    monkeypatch.setenv("ANTHROPIC_API_KEY", fake_key("sk-ant-ENV-"))
+    add_key(c, "gemini", "g")
+    page = c.get("/admin/ai").text
+    cards = dict(re.findall(r'data-provider="(\w+)" data-ready="(\w+)"', page))
+    assert cards["anthropic"] == "no" and cards["gemini"] == "no" and cards["openai"] == "yes"
+    assert page.count("มี key แล้ว (พร้อมเมื่อถูกเลือก)") == 2 and page.count("<span>พร้อมใช้งาน</span>") == 1
+    # a leftover model of another family is flagged on the selected provider
+    post(c, "/admin/ai", provider="anthropic", model="gpt-x", base_url="")
+    page = c.get("/admin/ai").text
+    assert dict(re.findall(r'data-provider="(\w+)" data-ready="(\w+)"', page))["anthropic"] == "no"
+    assert "รุ่นที่ตั้งไว้ไม่ใช่ของผู้ให้บริการนี้" in page
+    post(c, "/admin/ai", provider="anthropic", model="", base_url="")
     page = c.get("/admin/ai").text
     assert dict(re.findall(r'data-provider="(\w+)" data-ready="(\w+)"', page))["anthropic"] == "yes"
+    assert "รุ่นที่ตั้งไว้ไม่ใช่ของผู้ให้บริการนี้" not in page
     post(c, "/admin/ai", provider="openai", model="", base_url="")
     page = c.get("/admin/ai").text
     assert dict(re.findall(r'data-provider="(\w+)" data-ready="(\w+)"', page))["openai"] == "no"
@@ -456,13 +493,16 @@ def test_readiness_cards(c, secrets_on, monkeypatch):
     "https://api.example.com:99999/v1", "https:///v1", "https://exa mple.com", "https://api.example.com/v1\\x",
     "https://ตัวอย่าง.com", "https://" + "a" * 300 + ".com", "javascript:alert(1)", "//api.example.com/v1",
     "https://-bad-.example.com", "https://api.example.com\n/v1",
+    "https://[2002:7f00:1::]/v1", "https://[2002:a00:1::]/", "https://[2001:0:4136:e378:8000:63bf:3fff:fdd2]/",
+    "https://[64:ff9b::7f00:1]/v1", "https://[64:ff9b::a9fe:a9fe]/", "https://api.example.com:0/v1",
 ])
 def test_base_url_rejected(url):
     assert routes_keys.base_url_error(url) is not None
 
 
 @pytest.mark.parametrize("url", ["", "https://api.example.com/v1", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-                                 "https://8.8.8.8/v1", "https://api.example.com:8443/openai/"])
+                                 "https://8.8.8.8/v1", "https://api.example.com:8443/openai/",
+                                 "https://[2002:808:808::]/v1", "https://[64:ff9b::808:808]/v1"])
 def test_base_url_accepted(url):
     assert routes_keys.base_url_error(url) is None
 
@@ -500,9 +540,20 @@ def capture(uid, key):
     return r.status_code
 
 
-def create_device(c, label="หุ่นยนต์ 1") -> str:
-    r = post(c, "/admin/devices", label=label)
+def device_nonce(c) -> str:
+    m = re.search(r'name="nonce" value="([^"]+)"', c.get("/admin/devices").text)
+    assert m, "no one-time nonce in the device form"
+    return m.group(1)
+
+
+def create_device_response(c, label="หุ่นยนต์ 1"):
+    r = post(c, "/admin/devices", label=label, nonce=device_nonce(c))
     assert r.status_code == 200 and "no-store" in r.headers["cache-control"]
+    return r
+
+
+def create_device(c, label="หุ่นยนต์ 1") -> str:
+    r = create_device_response(c, label)
     m = re.search(r'data-device-key>([^<]+)<', r.text)
     assert m
     return html.unescape(m.group(1))
@@ -581,7 +632,124 @@ def test_pages_are_thai_and_labelled(c, secrets_on, path):
 
 
 def test_device_created_page_is_labelled(c, secrets_on):
-    r = post(c, "/admin/devices", label="d")
+    r = create_device_response(c, "d")
     p = _A11y()
     p.feed(r.text)
     assert p.lang == "th" and all(p.buttons) and "แสดงครั้งเดียว" in r.text
+
+
+# --- fix round 1 ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("provider,url", [
+    ("openai", "https://api.openai.com/v1"), ("gemini", "https://generativelanguage.googleapis.com/v1beta/openai/"),
+    ("deepseek", "https://api.deepseek.com"), ("deepseek", "https://api.deepseek.com/v1"),
+    ("qwen", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
+    ("qwen", "https://ws-1a2b.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"), ("openai", ""), ("anthropic", ""),
+])
+def test_official_hosts_are_allowed(provider, url, monkeypatch):
+    monkeypatch.delenv("NEXXA_ALLOW_CUSTOM_BASE_URL", raising=False)
+    assert runtime_config.base_url_error(url, provider) is None
+
+
+@pytest.mark.parametrize("provider,url", [
+    ("openai", "https://attacker.example/v1"), ("openai", "https://api.openai.com.attacker.example/v1"),
+    ("openai", "https://api.deepseek.com/v1"), ("deepseek", "https://xapi.deepseek.com"),
+    ("qwen", "https://evilaliyuncs.com/v1"), ("qwen", "https://aliyuncs.com.attacker.example/v1"),
+    ("gemini", "https://googleapis.com/v1"), ("anthropic", "https://api.anthropic.com/v1"),
+    ("nope", "https://api.openai.com"),
+])
+def test_other_hosts_need_the_operator_opt_in(provider, url, monkeypatch):
+    monkeypatch.delenv("NEXXA_ALLOW_CUSTOM_BASE_URL", raising=False)
+    err = runtime_config.base_url_error(url, provider)
+    assert err is not None
+    if provider not in ("anthropic", "nope"):
+        assert "NEXXA_ALLOW_CUSTOM_BASE_URL" in err
+        monkeypatch.setenv("NEXXA_ALLOW_CUSTOM_BASE_URL", "1")
+        assert runtime_config.base_url_error(url, provider) is None
+        assert runtime_config.base_url_error("https://10.0.0.1/v1", provider) is not None  # SSRF rules still apply
+
+
+def test_foreign_base_url_rejected_at_write_time_unless_opted_in(c, secrets_on, monkeypatch):
+    r = post(c, "/admin/ai", provider="openai", model="gpt-x", base_url="https://attacker.example/v1")
+    assert r.status_code == 422 and 'id="f-base_url-error"' in r.text and "NEXXA_ALLOW_CUSTOM_BASE_URL" in r.text
+    assert count(secrets_on, AppSetting) == 0 and count(secrets_on, AuditLog) == 0
+    monkeypatch.setenv("NEXXA_VISION_PROVIDER", "openai")  # empty provider field = the server's provider
+    r = post(c, "/admin/ai", provider="", model="", base_url="https://attacker.example/v1")
+    assert r.status_code == 422 and count(secrets_on, AppSetting) == 0
+    monkeypatch.setenv("NEXXA_ALLOW_CUSTOM_BASE_URL", "1")
+    assert post(c, "/admin/ai", provider="openai", model="gpt-x", base_url="https://attacker.example/v1").status_code == 303
+    (log,) = rows(secrets_on, AuditLog)
+    assert "https://attacker.example/v1" in log.detail
+
+
+@pytest.mark.parametrize("key_from", ["web", "env"])
+def test_stored_foreign_base_url_is_blocked_at_use_time(c, secrets_on, monkeypatch, crop, caplog, key_from):
+    monkeypatch.setenv("NEXXA_ALLOW_CUSTOM_BASE_URL", "1")
+    assert post(c, "/admin/ai", provider="openai", model="gpt-x", base_url="https://attacker.example/v1").status_code == 303
+    monkeypatch.delenv("NEXXA_ALLOW_CUSTOM_BASE_URL")  # the operator removed the opt-in; the DB value is now stale
+    key = add_key(c, "openai", "o") if key_from == "web" else fake_key("sk-ENV-")
+    if key_from == "env":
+        monkeypatch.setenv("OPENAI_API_KEY", key)
+    built = capture_openai(monkeypatch)
+    with caplog.at_level(logging.DEBUG):
+        r = analyzer.analyze_leaf(GOOD, crop)
+    assert built == []  # no client was built: the key was never handed to anything
+    assert r.label is None and r.needs_review and "NEXXA_ALLOW_CUSTOM_BASE_URL" in r.note
+    assert_no_leak(key, r.note, caplog.text)
+    with Session(secrets_on) as s:  # a value written straight into the DB is checked the same way
+        s.get(AppSetting, "vision_base_url").value = "https://10.0.0.5/v1"
+        s.commit()
+    monkeypatch.setenv("NEXXA_ALLOW_CUSTOM_BASE_URL", "1")
+    assert analyzer.analyze_leaf(GOOD, crop).needs_review and built == []
+    with Session(secrets_on) as s:
+        s.get(AppSetting, "vision_base_url").value = "https://ok.example.com/v1"
+        s.commit()
+    assert analyzer.analyze_leaf(GOOD, crop).label == "ปกติ" and built[-1][0]["base_url"] == "https://ok.example.com/v1"
+
+
+def test_env_base_url_stays_trusted(secrets_on, monkeypatch, crop):
+    monkeypatch.setenv("NEXXA_VISION_PROVIDER", "openai")
+    monkeypatch.setenv("NEXXA_VISION_MODEL", "m")
+    monkeypatch.setenv("OPENAI_API_KEY", fake_key())
+    monkeypatch.setenv("NEXXA_VISION_BASE_URL", "https://gateway.example.net/v1")  # operator-controlled
+    built = capture_openai(monkeypatch)
+    assert analyzer.analyze_leaf(GOOD, crop).label == "ปกติ"
+    assert built[-1][0]["base_url"] == "https://gateway.example.net/v1"
+
+
+def test_can_decrypt_never_raises(monkeypatch):
+    monkeypatch.setenv("NEXXA_SECRET_KEY", Fernet.generate_key().decode())
+    blob = secretbox.encrypt("x" * 20)
+    assert secretbox.can_decrypt(blob) is True
+    for bad in (b"garbage", b"", None, "text"):
+        assert secretbox.can_decrypt(bad) is False
+    monkeypatch.setenv("NEXXA_SECRET_KEY", Fernet.generate_key().decode())
+    assert secretbox.can_decrypt(blob) is False
+    monkeypatch.delenv("NEXXA_SECRET_KEY")
+    assert secretbox.can_decrypt(blob) is False
+
+
+def test_undecryptable_key_is_not_shown_in_use(c, secrets_on, monkeypatch):
+    add_key(c, "openai", "old-secret")
+    monkeypatch.setenv("NEXXA_SECRET_KEY", Fernet.generate_key().decode())  # NEXXA_SECRET_KEY was changed
+    page = c.get("/admin/keys").text
+    assert "<span>ถอดรหัสไม่ได้</span>" in page and "<span>กำลังใช้</span>" not in page
+    add_key(c, "gemini", "new")
+    page = c.get("/admin/keys").text
+    assert page.count("<span>ถอดรหัสไม่ได้</span>") == 1 and page.count("<span>กำลังใช้</span>") == 1
+
+
+def test_device_form_replay_does_not_mint_a_second_key(c, secrets_on):
+    nonce = device_nonce(c)
+    first = post(c, "/admin/devices", label="r1", nonce=nonce)
+    assert first.status_code == 200 and "data-device-key" in first.text
+    key = html.unescape(re.search(r'data-device-key>([^<]+)<', first.text).group(1))
+    replay = post(c, "/admin/devices", label="r1", nonce=nonce)  # browser refresh re-submits the same form
+    assert replay.status_code == 409 and "data-device-key" not in replay.text and "สร้างไปแล้ว" in replay.text
+    assert "no-store" in replay.headers["cache-control"]
+    missing = post(c, "/admin/devices", label="r2")
+    assert missing.status_code == 409 and "data-device-key" not in missing.text
+    assert count(secrets_on, DeviceKey) == 1 and [a.action for a in rows(secrets_on, AuditLog)] == ["device.create"]
+    session = json.dumps(security.read_session(c.cookies.get("nexxa_session")))
+    assert_no_leak(key, session, replay.text)
+    assert post(c, "/admin/devices", label="r3", nonce=device_nonce(c)).status_code == 200  # a fresh form works

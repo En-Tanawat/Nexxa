@@ -102,10 +102,11 @@ def test_sdk_typeerror_is_api_failure_not_unreadable(crop, caplog):
         r = analyze_leaf(IMG, crop, client=FakeClient(error=err))
     assert r.label is None and r.confidence == 0.0 and r.needs_review is True
     assert "เรียก Claude ไม่สำเร็จ" in r.note and "TypeError" in r.note
-    assert "Could not resolve authentication" not in r.note  # full text stays in the log
-    assert "Could not resolve authentication" in caplog.text
+    assert "Could not resolve authentication" not in r.note
+    # provider errors are logged as type (+ status, request id) only: SDK messages/bodies can echo key material
+    assert "TypeError" in caplog.text and "Could not resolve authentication" not in caplog.text
     assert "อ่านไม่ได้" not in r.note
-    assert any(rec.exc_info for rec in caplog.records)
+    assert not any(rec.exc_info for rec in caplog.records)
 
 
 def test_max_tokens_is_truncated_failure(crop):
@@ -145,8 +146,12 @@ def test_anthropic_client_built_with_one_retry_and_60s(crop, monkeypatch):
     assert seen == [{"timeout": 60, "max_retries": 1}]
 
 
-def test_anthropic_status_note_is_sanitised(crop):
+def test_anthropic_status_note_is_sanitised(crop, caplog):
     req = httpx.Request("POST", "https://api.anthropic.com")
-    err = anthropic.RateLimitError("secret detail", response=httpx.Response(429, request=req), body=None)
-    r = analyze_leaf(IMG, crop, client=FakeClient(error=err))
+    resp = httpx.Response(429, request=req, headers={"request-id": "req_011abc"})
+    err = anthropic.RateLimitError("secret detail", response=resp, body={"echo": "secret detail"})
+    with caplog.at_level(logging.ERROR, logger="app.analyzer"):
+        r = analyze_leaf(IMG, crop, client=FakeClient(error=err))
     assert "RateLimitError 429" in r.note and "secret detail" not in r.note
+    assert "RateLimitError 429" in caplog.text and "req_011abc" in caplog.text
+    assert "secret detail" not in caplog.text and not any(rec.exc_info for rec in caplog.records)

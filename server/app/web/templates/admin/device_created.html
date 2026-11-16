@@ -1,9 +1,10 @@
 {%- extends "base_admin.html" -%}
 {%- set active = "device" -%}
-{% block title %}สร้าง device key แล้ว{% endblock %}
+{% block title %}{{ "สร้าง device key แล้ว" if device else "คีย์นี้สร้างไปแล้ว" }}{% endblock %}
 {% block content %}
+{%- if device %}
 {{ c.page_header("สร้าง device key แล้ว", eyebrow="อุปกรณ์", text="คัดลอกคีย์นี้ไปใส่ในเฟิร์มแวร์ของ " ~ device.label ~ " ตอนนี้") }}
-{{ c.alert("warn", "คีย์นี้แสดงครั้งเดียวเท่านั้น ระบบเก็บไว้เพียงค่าแฮช เมื่อออกจากหน้านี้จะดูคีย์เต็มอีกไม่ได้ ถ้าทำหายให้สร้างคีย์ใหม่แล้วยกเลิกคีย์เดิม อย่ารีเฟรชหน้านี้ (จะเป็นการสร้างคีย์ใหม่อีกอัน)", title="แสดงครั้งเดียว", role="alert") }}
+{{ c.alert("warn", "คีย์นี้แสดงครั้งเดียวเท่านั้น ระบบเก็บไว้เพียงค่าแฮช เมื่อออกจากหน้านี้จะดูคีย์เต็มอีกไม่ได้ ถ้าทำหายให้สร้างคีย์ใหม่แล้วยกเลิกคีย์เดิม", title="แสดงครั้งเดียว", role="alert") }}
 {% call c.card("device key ของ " ~ device.label, subtitle="ส่งในส่วนหัว X-Device-Key ทุกครั้งที่หุ่นยนต์ส่งภาพ", icon="device") %}
   <p class="code code--secret" translate="no" data-device-key>{{ device_key }}</p>
   <p class="field__help">ตัวอย่างการใช้งาน: ส่วนหัว <code translate="no">X-Device-Key</code> ของคำขอ <code translate="no">POST /captures</code> และ <code translate="no">POST /rounds</code></p>
@@ -11,4 +12,13 @@
     {{ c.button("คัดลอกแล้ว กลับไปหน้าอุปกรณ์", href="/admin/devices", icon="ok") }}
   </div>
 {% endcall %}
+{%- else %}
+{{ c.page_header("คีย์นี้สร้างไปแล้ว", eyebrow="อุปกรณ์", text="ไม่มีการสร้าง device key ใหม่ซ้ำ") }}
+{% call c.card("ฟอร์มนี้ถูกใช้ไปแล้ว", subtitle="เกิดจากการรีเฟรชหน้าที่แสดงคีย์ หรือส่งฟอร์มเก่าซ้ำ", icon="device") %}
+  {{ c.alert("info", "เพื่อความปลอดภัย ระบบสร้างคีย์ได้ครั้งเดียวต่อการเปิดฟอร์มหนึ่งครั้ง และแสดงคีย์เต็มได้ครั้งเดียว ถ้ายังไม่ได้คัดลอกคีย์ไว้ ให้ยกเลิกคีย์นั้นในหน้าอุปกรณ์แล้วสร้างใหม่", title="คีย์ที่สร้างแล้วดูซ้ำไม่ได้") }}
+  <div class="form-actions">
+    {{ c.button("กลับไปหน้าอุปกรณ์", href="/admin/devices", icon="arrow-right") }}
+  </div>
+{% endcall %}
+{%- endif %}
 {% endblock %}

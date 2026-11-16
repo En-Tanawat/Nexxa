@@ -4,17 +4,16 @@ Secrets never leave this module in clear except once: a new device key is shown 
 Provider keys are Fernet-encrypted (secretbox) and shown only as a mask + last 4; when secretbox is off, nothing that
 would store a key is accepted. Device keys are stored as SHA-256 hashes. Audit rows never carry a secret.
 """
-import ipaddress
 import os
 import re
 from datetime import datetime, timezone
-from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import runtime_config
+from app.config import settings
 from app.db import get_session
 from app.models import AdminUser, AppSetting, DeviceKey, ProviderKey
 from app.providers import PROVIDERS
@@ -22,15 +21,16 @@ from app.web import audit, deps, secretbox, security
 from app.web.routes_admin import CSRF, Id, _delete_page, _done, _fields, _missing, _text, _thai_time, _update_detail
 from app.web.templating import render
 
+base_url_error = runtime_config.base_url_error  # kept here for callers/tests
+
 router = APIRouter(prefix="/admin", dependencies=[Depends(deps.require_admin)])
 
 PROVIDER_TH = {"anthropic": "Anthropic (Claude)", "openai": "OpenAI", "gemini": "Google Gemini",
                "qwen": "Qwen (Alibaba Cloud)", "deepseek": "DeepSeek"}
-KEY_MIN, KEY_MAX, LABEL_MAX, MODEL_MAX, URL_MAX = 8, 512, 60, 100, 300
+KEY_MIN, KEY_MAX, LABEL_MAX, MODEL_MAX = 8, 512, 60, 100
+DEVICE_NONCE = "device_nonce"
 KEY_RE = re.compile(r"[\x21-\x7e]+")  # printable ASCII, no spaces: every provider's keys look like this
 MODEL_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]*")
-HOST_LABEL_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
-BLOCKED_HOST_SUFFIXES = (".localhost", ".local", ".internal")
 
 
 def _now() -> datetime:
@@ -46,54 +46,6 @@ def _key_error(key: str) -> str | None:
         return f"คีย์ต้องยาว {KEY_MIN}-{KEY_MAX} ตัวอักษร"
     if not KEY_RE.fullmatch(key):
         return "คีย์ใช้ได้เฉพาะตัวอักษรภาษาอังกฤษ ตัวเลข และเครื่องหมาย ห้ามมีช่องว่างหรือภาษาไทย"
-    return None
-
-
-def base_url_error(value: str) -> str | None:
-    """Server-side SSRF guard for the base URL an admin may set; '' means the provider's default.
-
-    shortcut: a hostname that RESOLVES to a private/loopback address is not blocked (no DNS lookup here, and DNS can
-    change after the check); the OWASP task should pin/check the resolved address at connect time.
-    """
-    if not value:
-        return None
-    if len(value) > URL_MAX:
-        return f"URL ยาวเกินไป (ไม่เกิน {URL_MAX} ตัวอักษร)"
-    if not value.isascii() or not value.isprintable() or " " in value or "\\" in value:
-        return "URL มีอักขระที่ใช้ไม่ได้ (ช่องว่าง เครื่องหมาย \\ หรือตัวอักษรที่ไม่ใช่ภาษาอังกฤษ)"
-    if "?" in value or "#" in value:
-        return "URL ต้องไม่มีส่วน ? หรือ # (ห้ามใส่คีย์หรือพารามิเตอร์ใน URL)"
-    try:
-        parts = urlsplit(value)
-        host = parts.hostname or ""
-        parts.port  # noqa: B018 - raises ValueError for a port that is not a number in 0-65535
-    except ValueError:
-        return "รูปแบบ URL ไม่ถูกต้อง"
-    if "@" in parts.netloc:
-        return "ห้ามใส่ชื่อผู้ใช้หรือรหัสผ่านใน URL"
-    if not host:
-        return "รูปแบบ URL ไม่ถูกต้อง ตัวอย่าง https://api.example.com/v1"
-    if os.getenv("NEXXA_ALLOW_INSECURE_BASE_URL") == "1" and host in ("localhost", "127.0.0.1") \
-            and parts.scheme in ("http", "https"):
-        return None  # local testing only, opt-in from the server environment
-    if parts.scheme != "https":
-        return "URL ต้องขึ้นต้นด้วย https://"
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        ip = None
-    if ip is not None:
-        if ip.version == 6 and ip.ipv4_mapped:
-            ip = ip.ipv4_mapped
-        if not ip.is_global or ip.is_multicast:
-            return "ห้ามใช้ที่อยู่ IP ภายในหรือที่สงวนไว้ (เช่น 10.x, 192.168.x, 127.x, 169.254.x)"
-        return None
-    labels = host.split(".")
-    # every label a DNS label and a TLD that starts with a letter: rejects "127.1", "0x7f000001", "intranet"
-    if len(labels) < 2 or not all(HOST_LABEL_RE.fullmatch(x) for x in labels) or not labels[-1][0].isalpha():
-        return "ชื่อโดเมนไม่ถูกต้อง ต้องเป็นโดเมนสาธารณะ เช่น api.example.com"
-    if host == "localhost" or host.endswith(BLOCKED_HOST_SUFFIXES):
-        return "ห้ามใช้ชื่อเครื่องภายใน (localhost, .local, .internal)"
     return None
 
 
@@ -113,11 +65,13 @@ def _key_form(request: Request, values: dict, errors: dict, key: ProviderKey | N
 def keys_list(request: Request, session: Session = Depends(get_session)):
     keys = session.scalars(select(ProviderKey).order_by(ProviderKey.provider, ProviderKey.created_at.desc(),
                                                         ProviderKey.id.desc())).all()
+    broken = {k.id for k in keys if not secretbox.can_decrypt(k.secret_enc)}
     in_use: dict[str, int] = {}
-    for k in keys:  # same order as runtime_config: the newest active key of each provider is the one used
-        if k.active:
+    for k in keys:  # same rule as runtime_config: the newest active key that decrypts is the one used
+        if k.active and k.id not in broken:
             in_use.setdefault(k.provider, k.id)
-    return render(request, "admin/keys_list.html", keys=keys, in_use=set(in_use.values()), provider_th=PROVIDER_TH,
+    return render(request, "admin/keys_list.html", keys=keys, in_use=set(in_use.values()), broken=broken,
+                  provider_th=PROVIDER_TH,
                   secrets_on=secretbox.secrets_enabled(), mask=secretbox.mask, added=lambda k: _thai_time(k.created_at)[:10])
 
 
@@ -219,8 +173,16 @@ def key_delete(request: Request, key_id: Id, admin: AdminUser = Depends(deps.req
 
 def _devices_page(request: Request, session: Session, values: dict, errors: dict, status_code=200):
     devices = session.scalars(select(DeviceKey).order_by(DeviceKey.revoked_at.is_not(None), DeviceKey.id.desc())).all()
+    nonce = security.new_csrf_token()  # one-time: a refreshed/replayed create form must not mint a second key
     return render(request, "admin/devices_list.html", status_code=status_code, devices=devices, values=values,
-                  errors=errors, mask=secretbox.mask, when=_thai_time, env_key=bool(os.getenv("NEXXA_DEVICE_KEY")))
+                  errors=errors, mask=secretbox.mask, when=_thai_time, env_key=bool(os.getenv("NEXXA_DEVICE_KEY")),
+                  nonce=nonce, session_update={DEVICE_NONCE: nonce})
+
+
+def _no_store(response):
+    response.headers["Cache-Control"] = "no-store"  # the only page that can hold a key in clear: never cache it
+    response.headers["Pragma"] = "no-cache"
+    return response
 
 
 @router.get("/devices")
@@ -229,22 +191,24 @@ def devices_list(request: Request, session: Session = Depends(get_session)):
 
 
 @router.post("/devices", dependencies=CSRF)
-def device_create(request: Request, f: dict = _fields("label"), admin: AdminUser = Depends(deps.require_admin),
+def device_create(request: Request, f: dict = _fields("label", "nonce"), admin: AdminUser = Depends(deps.require_admin),
                   session: Session = Depends(get_session)):
     e: dict[str, str] = {}
     label = _text(e, "label", f["label"], "ชื่ออุปกรณ์", LABEL_MAX)
     if e:
         return _devices_page(request, session, {"label": f["label"]}, e, status_code=422)
+    expected = (deps.session_data(request) or {}).get(DEVICE_NONCE)
+    if not isinstance(expected, str) or not security.csrf_ok(expected, f["nonce"]):
+        # shortcut: the nonce lives in the signed cookie, so two truly parallel POSTs could both pass; a refresh cannot
+        return _no_store(render(request, "admin/device_created.html", status_code=409, device=None, device_key=None))
     key = security.new_device_key()
     row = DeviceKey(label=label, key_hash=security.hash_device_key(key), last4=secretbox.last4(key))
     session.add(row)
     session.flush()
     audit.record(session, admin.username, "device.create", f"device#{row.id}", label)
     session.commit()
-    response = render(request, "admin/device_created.html", device=row, device_key=key)
-    response.headers["Cache-Control"] = "no-store"  # the only time the key exists in clear: never cache it
-    response.headers["Pragma"] = "no-cache"
-    return response
+    return _no_store(render(request, "admin/device_created.html", device=row, device_key=key,
+                            session_update={DEVICE_NONCE: None}))
 
 
 @router.post("/devices/{device_id}/revoke", dependencies=CSRF)
@@ -266,15 +230,33 @@ AI_FIELDS = {"provider": runtime_config.VISION_PROVIDER, "model": runtime_config
              "base_url": runtime_config.VISION_BASE_URL}
 
 
+# Model-name prefixes that clearly belong to one provider; used only to warn about a leftover model name.
+MODEL_FAMILY = {"anthropic": "claude", "openai": "gpt", "gemini": "gemini", "qwen": "qwen", "deepseek": "deepseek"}
+
+
+def _model_family(model: str) -> str | None:
+    return next((p for p, prefix in MODEL_FAMILY.items() if model.lower().startswith(prefix)), None)
+
+
 def _readiness() -> list[dict]:
-    selected, model = runtime_config.vision_provider(), runtime_config.vision_model()
+    """One tile per provider. Only the selected provider can be 'ready': model and base URL are shared settings
+    (one value, like the env vars), so for the others we only say whether a key is waiting for them."""
+    selected, setting = runtime_config.vision_provider(), runtime_config.vision_model()
     cards = []
     for name, prov in PROVIDERS.items():
         source = "web" if runtime_config.db_provider_key(name) else "env" if os.getenv(prov.key_env) else None
-        has_model = prov.kind == "anthropic" or bool(model)  # anthropic has a built-in default model
-        missing = [text for ok, text in ((source, "ยังไม่มีคีย์"), (has_model, "ยังไม่ได้ตั้งชื่อรุ่น")) if not ok]
-        cards.append({"name": name, "label": PROVIDER_TH.get(name, name), "selected": name == selected,
-                      "source": source, "key_env": prov.key_env, "has_model": has_model, "missing": missing})
+        card = {"name": name, "label": PROVIDER_TH.get(name, name), "selected": name == selected, "source": source,
+                "key_env": prov.key_env, "model": None, "missing": [] if source else ["ยังไม่มีคีย์"]}
+        if card["selected"]:
+            card["model"] = setting or (settings.vision_model if prov.kind == "anthropic" else None)
+            if not card["model"]:
+                card["missing"].append("ยังไม่ได้ตั้งชื่อรุ่น")
+            elif _model_family(card["model"]) not in (None, name):
+                card["missing"].append("รุ่นที่ตั้งไว้ไม่ใช่ของผู้ให้บริการนี้")
+            card["state"] = "missing" if card["missing"] else "ready"
+        else:
+            card["state"] = "standby" if source else "missing"
+        cards.append(card)
     return cards
 
 
@@ -301,7 +283,8 @@ def ai_settings_save(request: Request, f: dict = _fields(*AI_FIELDS), admin: Adm
         e["provider"] = "กรุณาเลือกผู้ให้บริการจากรายการ"
     if clean["model"] and (len(clean["model"]) > MODEL_MAX or not MODEL_RE.fullmatch(clean["model"])):
         e["model"] = f"ชื่อรุ่นใช้ได้เฉพาะตัวอักษรภาษาอังกฤษ ตัวเลข และ . _ - : / @ + (ไม่เกิน {MODEL_MAX} ตัวอักษร)"
-    if err := base_url_error(clean["base_url"]):
+    # checked against the provider that will actually use it (empty field = the server's NEXXA_VISION_PROVIDER)
+    if err := base_url_error(clean["base_url"], clean["provider"] or settings.vision_provider):
         e["base_url"] = err
     if e:
         return _ai_page(request, clean, e, status_code=422)
@@ -310,13 +293,14 @@ def ai_settings_save(request: Request, f: dict = _fields(*AI_FIELDS), admin: Adm
         row = session.get(AppSetting, key)
         if (row.value if row else "") == clean[field]:
             continue
-        changed.append(key)
+        changed.append(f"{key}={clean[field] or '(ค่าเริ่มต้น)'}")  # no secrets here: the URL has no userinfo/query
         if not clean[field]:
             session.delete(row)  # empty = back to the environment / provider default
         elif row is None:
             session.add(AppSetting(key=key, value=clean[field]))
         else:
             row.value = clean[field]
-    audit.record(session, admin.username, "ai.update", "ai_settings", _update_detail(changed))  # names only
+    # values are kept so it is traceable where keys were sent; none of these fields can hold a secret
+    audit.record(session, admin.username, "ai.update", "ai_settings", _update_detail(changed))
     session.commit()
     return _done(request, "/admin/ai", "บันทึกการตั้งค่า AI แล้ว")
