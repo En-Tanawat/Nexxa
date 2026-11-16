@@ -1,6 +1,7 @@
 {%- extends "base_public.html" -%}
-{#- Robot screen: a phone-sized display on the robot. Glance-sized: one colour hero, two number tiles, one comparison line.
-    The long text sits behind one toggle. screen.js fills everything with textContent; ?kiosk=1 (decided here) drops the site chrome. -#}
+{#- Robot screen: a phone-sized display on the robot, landscape first. Left: state, hero, the two number tiles. Right: the
+    comparison rows and the lot's trend chart. The long text and the camera sit behind two toggles (in landscape they replace
+    the right column). screen.js fills everything with textContent; ?kiosk=1 (decided here) drops the site chrome. -#}
 {% block title %}หน้าจอหุ่นยนต์{% endblock %}
 {% block html_attrs %} data-default-theme="dark"{% endblock %}
 {% block head %}
@@ -10,7 +11,7 @@
 {% block body_class %}page-screen{% if kiosk %} is-kiosk{% endif %}{% endblock %}
 
 {% block body %}
-<div class="scr" id="screen">
+<div class="scr" id="screen" data-panel="">
   {%- if not kiosk %}
   <nav class="scr-site" aria-label="เมนูหลัก">
     <a class="scr-btn scr-btn--ghost" href="/">{{ c.icon("overview", 22) }}<span>แดชบอร์ด</span></a>
@@ -18,18 +19,23 @@
   </nav>
   {%- endif %}
 
-  <header class="scr-strip">
-    <p class="scr-strip__state" id="scr-state" data-state="loading">{{ c.icon("robot", 28) }}<span id="scr-state-text">กำลังโหลด</span></p>
-    <p class="scr-strip__batt" id="scr-batt" data-low="0">{{ c.icon("battery", 28) }}<span id="scr-batt-text">–</span></p>
-  </header>
-
   <div class="scr-error" id="scr-error" role="alert" hidden>
     {{ c.icon("wifi-off", 28) }}<p>ขาดการเชื่อมต่อ</p>
     <button class="scr-btn" id="scr-retry" type="button">{{ c.icon("refresh", 22) }}<span>ลองใหม่</span></button>
   </div>
 
-  <main class="scr-main" id="main" tabindex="-1">
+  <main class="scr-body" id="main" tabindex="-1">
     <noscript><p class="scr-empty">หน้านี้ต้องเปิดใช้สคริปต์ในเบราว์เซอร์</p></noscript>
+
+    <header class="scr-strip">
+      <p class="scr-strip__state" id="scr-state" data-state="loading">{{ c.icon("robot", 28) }}<span id="scr-state-text">กำลังโหลด</span></p>
+      <p class="scr-strip__batt" id="scr-batt" data-low="0">{{ c.icon("battery", 28) }}<span id="scr-batt-text">–</span></p>
+    </header>
+
+    <div class="scr-hint" id="scr-hint">
+      <p>หมุนจอเป็นแนวนอนเพื่อดูแนวโน้ม</p>
+      <button class="scr-btn scr-btn--icon" id="scr-hint-x" type="button" aria-label="ปิดข้อความนี้">{{ c.icon("close", 22) }}</button>
+    </div>
 
     <section class="scr-busy" id="scr-busy" role="status" hidden>
       <span class="scr-spinner" aria-hidden="true"></span>
@@ -37,38 +43,63 @@
     </section>
 
     <section class="scr-hero" id="scr-hero" data-level="none" aria-labelledby="scr-cap">
-      <h1 class="scr-hero__cap" id="scr-cap">รอผลตรวจ</h1>
+      <div class="scr-hero__top">
+        <h1 class="scr-hero__cap" id="scr-cap">รอผลตรวจ</h1>
+        <p class="scr-hero__sub" id="scr-sub" hidden></p>
+      </div>
       <p class="scr-hero__level">
         {{ c.icon("ok", 48, "scr-ico scr-ico--ok") }}{{ c.icon("warn", 48, "scr-ico scr-ico--warn") }}{{ c.icon("danger", 48, "scr-ico scr-ico--alert") }}{{ c.icon("clock", 48, "scr-ico scr-ico--none") }}
         <span id="scr-level-text">รอผลตรวจ</span>
       </p>
-      <p class="scr-hero__sub" id="scr-sub" hidden></p>
     </section>
 
     <ul class="scr-tiles" id="scr-tiles" aria-label="สิ่งที่พบ" hidden>
       <li class="scr-tile scr-tile--yellow" id="scr-yellow" data-on="0">
-        <p class="scr-tile__name">ใบเหลือง</p>
+        <p class="scr-tile__name"><span class="scr-swatch scr-swatch--yellow" aria-hidden="true"></span>ใบเหลือง</p>
         <p class="scr-tile__n" id="scr-yellow-n">0</p>
         <ul class="scr-sides" id="scr-yellow-sides" aria-label="ด้านที่พบใบเหลือง"></ul>
       </li>
       <li class="scr-tile scr-tile--brown" id="scr-brown" data-on="0">
-        <p class="scr-tile__name">จุดน้ำตาล</p>
+        <p class="scr-tile__name"><span class="scr-swatch scr-swatch--brown" aria-hidden="true"></span>จุดน้ำตาล</p>
         <p class="scr-tile__n" id="scr-brown-n">0</p>
         <ul class="scr-sides" id="scr-brown-sides" aria-label="ด้านที่พบจุดน้ำตาล"></ul>
       </li>
     </ul>
 
-    <p class="scr-compare" id="scr-compare" data-dir="none" hidden><span class="scr-compare__arrow" id="scr-arrow" aria-hidden="true">●</span><span id="scr-compare-text">ยังไม่มีข้อมูลเทียบ</span></p>
+    <section class="scr-cmp" id="scr-cmp" aria-label="เทียบกับวันก่อนหน้าและแนวโน้ม" hidden>
+      <ul class="scr-rows" id="scr-rows">
+        <li class="scr-rows__head" aria-hidden="true"><span>เทียบ</span><span>ใบเหลือง</span><span>จุดน้ำตาล</span></li>
+      </ul>
+      <div class="scr-chart" id="scr-chart-box">
+        <p class="scr-trend" id="scr-trend" data-dir="none"><span class="scr-trend__arrow" id="scr-trend-arrow" aria-hidden="true"></span><span id="scr-trend-text">ข้อมูลแนวโน้มไม่พอ</span></p>
+        <svg class="scr-chart__svg" id="scr-chart" role="img" aria-label="ยังไม่มีข้อมูลแนวโน้ม" viewBox="0 0 340 118" focusable="false">
+          <defs>
+            <pattern id="scr-hatch" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+              <rect class="scr-hatch__bg" width="5" height="5"/>
+              <path class="scr-hatch__line" d="M0 0V5"/>
+            </pattern>
+          </defs>
+          <g id="scr-chart-g"></g>
+        </svg>
+      </div>
+      <ul class="scr-ranges" id="scr-ranges" aria-label="ช่วงเวลา">
+        {%- for key, label in [("lot", "ทั้งล็อต"), ("30", "30 วัน"), ("14", "14 วัน"), ("7", "7 วัน")] %}
+        <li><button class="scr-chip" type="button" data-range="{{ key }}" aria-pressed="{{ 'true' if key == 'lot' else 'false' }}">{{ label }}</button></li>
+        {%- endfor %}
+      </ul>
+    </section>
 
-    <ul class="scr-pills" id="scr-pills" aria-label="สถานีในรอบนี้" hidden></ul>
-
-    <div class="scr-actions">
-      <button class="scr-btn" id="scr-detail-btn" type="button" aria-expanded="false" aria-controls="scr-detail" hidden><span>ดูรายละเอียด</span></button>
-      <button class="scr-btn" id="scr-cam-btn" type="button" aria-pressed="false" aria-controls="scr-cam">{{ c.icon("camera", 22) }}<span>ดูภาพสด</span></button>
-      <button class="scr-btn scr-btn--icon" id="scr-fs-btn" type="button" aria-pressed="false" aria-label="เต็มจอ" hidden>{{ c.icon("maximize", 24) }}</button>
+    <div class="scr-foot">
+      <ul class="scr-pills" id="scr-pills" aria-label="สถานีในรอบนี้" hidden></ul>
+      <div class="scr-actions">
+        <button class="scr-btn" id="scr-detail-btn" type="button" aria-expanded="false" aria-controls="scr-detail" hidden><span>ดูรายละเอียด</span></button>
+        <button class="scr-btn" id="scr-cam-btn" type="button" aria-pressed="false" aria-controls="scr-cam">{{ c.icon("camera", 22) }}<span>ดูภาพสด</span></button>
+        <button class="scr-btn scr-btn--icon" id="scr-fs-btn" type="button" aria-pressed="false" aria-label="เต็มจอ" hidden>{{ c.icon("maximize", 24) }}</button>
+      </div>
     </div>
 
     <section class="scr-detail" id="scr-detail" aria-label="รายละเอียด" hidden>
+      <p class="scr-lot" id="scr-lot" hidden></p>
       <dl class="scr-facts" id="scr-facts"></dl>
       <div class="scr-text" id="scr-text"></div>
       <p class="scr-src" id="scr-src"></p>

@@ -321,6 +321,40 @@ def render_text(facts: dict) -> str:
     return _round_text(facts) if facts["scope"] == "round" else _station_text(facts)
 
 
+# --- robot screen: the three comparisons (findings only: yellow and brown, never a normal count) ---
+
+COMPARE_DAYS = 14
+
+
+def _has_data(vals) -> bool:
+    return bool(vals) and sum(vals) > 0
+
+
+def screen_compare(by_day: dict, day: date, previous: dict | None) -> dict:
+    """What the current counts are compared with: the latest earlier day with data, the 7-day daily average, the previous visit."""
+    earlier = [(day - timedelta(days=k)) for k in range(1, COMPARE_DAYS) if _has_data(by_day.get(day - timedelta(days=k)))]
+    yesterday = None
+    if earlier:
+        d = earlier[0]
+        yesterday = {"day": d.isoformat(), "yellow": by_day[d][1], "brown": by_day[d][2]}
+    week = [d for d in earlier if (day - d).days <= BASELINE_DAYS]
+    avg7 = None
+    if week:
+        avg7 = {"days": len(week), "yellow": round(sum(by_day[d][1] for d in week) / len(week), 1),
+                "brown": round(sum(by_day[d][2] for d in week) / len(week), 1)}
+    return {"yesterday": yesterday, "avg7": avg7, "previous_visit": previous}
+
+
+def round_trend(facts: dict) -> str:
+    """Direction word for a whole round (same thresholds as the robot display)."""
+    delta = facts["baseline"]["delta_pp"]
+    if facts["rising"] or (delta is not None and delta >= TREND_PP):
+        return "increase"
+    if delta is not None and delta <= -TREND_PP:
+        return "decrease"
+    return "flat" if delta is not None else "insufficient"
+
+
 # --- robot display (128x64 OLED: ASCII only, 21 chars x 6 lines) --------------------------------
 
 DISPLAY_COLS = 21

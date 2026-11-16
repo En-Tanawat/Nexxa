@@ -4,9 +4,11 @@ Never add image paths, notes, rfid_uid, keys or user data here.
 Rate limit is in memory per client IP (request.client). Behind a reverse proxy run uvicorn with --proxy-headers
 (and --forwarded-allow-ips) or every visitor shares the proxy's IP.
 """
+import hashlib
+import json
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from typing import Annotated
 
@@ -298,28 +300,49 @@ def latest_summary(session: Session = Depends(get_session)):
 
 # --- robot screen: one small read for /screen (robot status + this round's station results + the round result) ----
 
-def _screen_station(row: Summary) -> dict:
+def _screen_station(row: Summary, by_day: dict, day) -> dict:
     """Findings only: ใบเหลือง / จุดน้ำตาล with their angles, never a count or a label for ปกติ."""
     f = row.facts
     where = summaries._affected(f["angles"])
     prev = f["previous_visit"]
+    yellow, brown = f["counts"][stats.YELLOW], f["counts"][stats.BROWN]
+    last = None if prev is None or prev["abnormal_rate"] is None else {
+        "round_id": prev["round_id"], "yellow": prev["counts"][stats.YELLOW], "brown": prev["counts"][stats.BROWN]}
     return {"id": row.id, "level": summaries.display(f)["level"], "present": len(f["present"]),
-            "yellow": f["counts"][stats.YELLOW], "yellow_angles": where[stats.YELLOW],
-            "brown": f["counts"][stats.BROWN], "brown_angles": where[stats.BROWN],
+            "yellow": yellow, "yellow_angles": where[stats.YELLOW],
+            "brown": brown, "brown_angles": where[stats.BROWN],
             "abnormal_rate": f["abnormal_rate"], "vs_baseline_pp": f["baseline"]["delta_pp"],
             "vs_previous_pp": prev["delta_pp"] if prev else None,
-            "trend": f["trend"]["direction"], "trend_label": f["trend"]["label"], **_summary_out(row)}
+            "trend": f["trend"]["direction"], "trend_label": f["trend"]["label"],
+            "compare": summaries.screen_compare(by_day, day, last), **_summary_out(row)}
 
 
-def _screen_round(row: Summary) -> dict:
+def _screen_round(row: Summary, by_day: dict, day, last: dict | None) -> dict:
     f = row.facts
     worst = f["worst"]
+    yellow, brown = f["counts"][stats.YELLOW], f["counts"][stats.BROWN]
+    trend = summaries.round_trend(f)
     return {"id": row.id, "level": summaries.display(f)["level"],
             "stations_inspected": f["stations_inspected"], "stations_expected": f["stations_expected"],
-            "yellow": f["counts"][stats.YELLOW], "brown": f["counts"][stats.BROWN],
+            "yellow": yellow, "brown": brown,
             "abnormal_rate": f["abnormal_rate"], "vs_baseline_pp": f["baseline"]["delta_pp"],
             "worst": {"station": worst["station"], "abnormal_rate": worst["abnormal_rate"]} if worst else None,
-            "rising": f["rising"], **_summary_out(row)}
+            "rising": f["rising"], "trend": trend, "trend_label": summaries.TREND_LABELS[trend],
+            "compare": summaries.screen_compare(by_day, day, last), **_summary_out(row)}
+
+
+def _previous_round_counts(session: Session, round_id: int) -> dict | None:
+    """Yellow / brown totals of the round before this one (all its stations), or None when there is none or nothing was analysed."""
+    prev = session.scalar(select(func.max(Capture.round_id)).where(Capture.round_id < round_id))
+    if prev is None:
+        return None
+    total = {stats.NORMAL: 0, stats.YELLOW: 0, stats.BROWN: 0}
+    for sid in summaries.round_station_ids(session, prev):
+        for k, v in summaries._counts(summaries._angle_results(session, prev, sid)[0]).items():
+            total[k] += v
+    if not sum(total.values()):
+        return None
+    return {"round_id": prev, "yellow": total[stats.YELLOW], "brown": total[stats.BROWN]}
 
 
 @router.get("/screen")
@@ -330,12 +353,87 @@ def screen(response: Response, session: Session = Depends(get_session)):
     stations, whole, latest = [], None, None
     if round_id is not None:
         rows = {s.station_id: s for s in session.scalars(select(Summary).where(Summary.round_id == round_id))}
+        day = summaries._utc_day(session.get(Round, round_id).started_at)
+        daily: dict[int, dict] = {}  # station id -> {day: (normal, yellow, brown)} for the days before the round's day (server side only: yesterday and 7-day average)
+        for sid, d, n, y, b in session.execute(
+                select(DailyStat.station_id, DailyStat.day, func.sum(DailyStat.n_normal), func.sum(DailyStat.n_yellow), func.sum(DailyStat.n_brown))
+                .where(DailyStat.day >= day - timedelta(days=summaries.COMPARE_DAYS - 1), DailyStat.day < day)
+                .group_by(DailyStat.station_id, DailyStat.day)):
+            daily.setdefault(sid, {})[d] = (int(n or 0), int(y or 0), int(b or 0))
         for sid, name, order in session.execute(select(Station.id, Station.name, Station.route_order).where(*VISIBLE).order_by(Station.route_order, Station.id)):
-            stations.append({"station_id": sid, "name": name, "order": order, "summary": _screen_station(rows[sid]) if sid in rows else None})
+            stations.append({"station_id": sid, "name": name, "order": order,
+                             "summary": _screen_station(rows[sid], daily.get(sid, {}), day) if sid in rows else None})
         shown = {x["station_id"] for x in stations}
         done = [r for sid, r in rows.items() if sid in shown]
         latest = max(done, key=lambda r: (r.created_at, r.id)).station_id if done else None
-        whole = _screen_round(rows[None]) if None in rows else None
+        if None in rows:
+            total: dict = {}
+            for x in rows[None].facts["stations"]:
+                for d, vals in daily.get(x["station_id"], {}).items():
+                    total[d] = tuple(a + b for a, b in zip(total.get(d, (0, 0, 0)), vals))
+            whole = _screen_round(rows[None], total, day, _previous_round_counts(session, round_id))
     response.headers["Cache-Control"] = "public, max-age=2"  # live view polled every 4 s: the default 30 s would show old data
     return {"updated_at": _now_iso(), "demo": _demo(session), "robot": status, "round_id": round_id,
             "stations": stations, "latest": latest, "round": whole}
+
+
+# --- robot screen: the lot's history (columnar and small; the 4 s poll above never carries it) -------------
+
+HIST_FALLBACK_DAYS = 30
+HIST_MAX_DAYS = 366
+HIST_BUCKET_OVER = 90  # a longer span is summed per 7 days so the payload stays tiny
+
+
+def _hist_span(session: Session, station_id: int | None, today: date) -> tuple[date, date, Batch | None] | None:
+    """(first day, last day, batch) of "the lot": planting .. harvest (or today). None when there is no lot to follow."""
+    q = select(Batch).where(Batch.planted_on <= today)
+    q = q.where(Batch.station_id == station_id) if station_id is not None else q.join(Station, Batch.station_id == Station.id).where(*VISIBLE)
+    batches = session.scalars(q).all()
+    if station_id is not None:
+        # the batch growing now; else the most recent one (harvested): its history ends on its harvest day
+        b = stats.active_batch(list(batches), today) or max(batches, key=lambda x: (x.planted_on, x.id), default=None)
+        return (b.planted_on, b.harvested_on or today, b) if b and (b.harvested_on or today) >= b.planted_on else None
+    growing = [b for b in batches if b.harvested_on is None]
+    return (min(b.planted_on for b in growing), today, None) if growing else None  # all stations: the oldest lot still growing
+
+
+@router.get("/screen/history")
+def screen_history(
+    request: Request,
+    station_id: int | None = Query(None, ge=1, le=INT_MAX),
+    rng: str = Query("lot", alias="range", pattern="^(lot|30|14|7)$"),
+    session: Session = Depends(get_session),
+):
+    """Yellow / brown counts per day for one station (or all), over the lot or the last 30/14/7 days. Columnar: arrays
+    y and b with null for a day without data. More than 90 days: one value per 7 days (bucket 7). Never a normal count."""
+    if station_id is not None and session.scalar(select(Station.id).where(Station.id == station_id, *VISIBLE)) is None:
+        raise HTTPException(404, "unknown station")
+    today = stats.today()
+    span = _hist_span(session, station_id, today)
+    batch = span[2] if span else None  # the lot is reported whatever the range, so the screen can always show its age
+    end = span[1] if span else today
+    if rng == "lot":
+        start = span[0] if span else end - timedelta(days=HIST_FALLBACK_DAYS - 1)
+    else:
+        start = end - timedelta(days=int(rng) - 1)
+    start = max(start, end - timedelta(days=HIST_MAX_DAYS - 1))
+    q = select(DailyStat.day, func.sum(DailyStat.n_normal), func.sum(DailyStat.n_yellow), func.sum(DailyStat.n_brown))         .where(DailyStat.day >= start, DailyStat.day <= end).group_by(DailyStat.day)
+    q = q.where(DailyStat.station_id == station_id) if station_id is not None else q.join(Station, DailyStat.station_id == Station.id).where(*VISIBLE)
+    by_day = {d: (int(y or 0), int(b or 0)) for d, n, y, b in session.execute(q) if (n or 0) + (y or 0) + (b or 0) > 0}  # a day with no labelled result is null
+    days = (end - start).days + 1
+    bucket = 7 if days > HIST_BUCKET_OVER else 1
+    ys, bs = [], []
+    for i in range(0, days, bucket):
+        got = [by_day[start + timedelta(days=k)] for k in range(i, min(i + bucket, days)) if start + timedelta(days=k) in by_day]
+        ys.append(sum(g[0] for g in got) if got else None)
+        bs.append(sum(g[1] for g in got) if got else None)
+    body = {"start": start.isoformat(), "days": days, "bucket": bucket, "y": ys, "b": bs,
+            "age0": (start - batch.planted_on).days if batch else None, "harvested": bool(batch and batch.harvested_on),
+            "batch": {"planted_on": batch.planted_on.isoformat(), "harvested_on": batch.harvested_on.isoformat() if batch.harvested_on else None,
+                      "cycle_days": HARVEST_AGE_DAYS} if batch else None}
+    raw = json.dumps(body, separators=(",", ":")).encode()
+    etag = '"' + hashlib.sha256(raw).hexdigest()[:20] + '"'
+    headers = {"Cache-Control": "public, max-age=60", "ETag": etag}
+    if etag in [t.strip().removeprefix("W/") for t in request.headers.get("if-none-match", "").split(",")]:
+        return Response(status_code=304, headers=headers)
+    return Response(raw, media_type="application/json", headers=headers)
