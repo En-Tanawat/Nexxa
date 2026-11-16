@@ -817,7 +817,7 @@ def settings_save(
             else:
                 row.value = val
 
-    audit.record(session, admin.username, "setting.update", "system", "บันทึกการตั้งค่าระบบ")
+    audit.record(session, admin.username, "setting.update", "robot_stream_url", url or "(ค่าเริ่มต้น)")
     session.commit()
     return _done(request, "/admin/settings", "บันทึกการตั้งค่าระบบแล้ว")
 
