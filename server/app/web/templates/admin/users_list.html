@@ -1,0 +1,35 @@
+{%- extends "base_admin.html" -%}
+{%- set active = "users" -%}
+{% block title %}ผู้ดูแล{% endblock %}
+{% block content %}
+{{ c.page_header("ผู้ดูแลระบบ", eyebrow="ความปลอดภัย", text="บัญชีที่เข้าสู่แผงผู้ดูแลได้ ควรมีอย่างน้อยหนึ่งบัญชีเสมอ") }}
+
+{% call c.data_table(["ชื่อผู้ใช้", "สร้างเมื่อ", "เข้าสู่ระบบล่าสุด", "จัดการ"], users | length, "รายการผู้ดูแล") %}
+  {%- for u in users %}
+  <tr>
+    <td data-label="ชื่อผู้ใช้"><strong>{{ u.username }}</strong>{% if admin and u.id == admin.id %} {{ c.badge("info", "บัญชีของคุณ") }}{% endif %}</td>
+    <td data-label="สร้างเมื่อ">{{ u.created_at.strftime("%Y-%m-%d") if u.created_at else "-" }}</td>
+    <td data-label="เข้าสู่ระบบล่าสุด">{{ u.last_login_at.strftime("%Y-%m-%d %H:%M") if u.last_login_at else "ยังไม่เคย" }}</td>
+    <td data-label="จัดการ"><div class="actions">
+      {{ c.button("เปลี่ยนรหัสผ่าน", variant="secondary", size="sm", icon="lock", href="/admin/users/" ~ u.id ~ "/password", attrs={"aria-label": "เปลี่ยนรหัสผ่านของ " ~ u.username}) }}
+      {{ c.button("ลบ", variant="danger", size="sm", icon="trash", href="/admin/users/" ~ u.id ~ "/delete", attrs={"aria-label": "ลบ " ~ u.username}) }}
+    </div></td>
+  </tr>
+  {%- endfor %}
+{% endcall %}
+
+{%- if errors %}{{ c.alert("danger", "มี " ~ errors | length ~ " ช่องที่ต้องแก้ไข ดูข้อความสีแดงใต้แต่ละช่อง", title="สร้างผู้ดูแลไม่สำเร็จ", role="alert") }}{% endif %}
+<form class="form" method="post" action="/admin/users" data-busy-form>
+  {{ c.csrf_field() }}
+  {% call c.card("เพิ่มผู้ดูแลใหม่", subtitle="รหัสผ่านถูกเก็บแบบแฮช ไม่มีใครดูย้อนหลังได้", icon="users") %}
+  <div class="form-grid">
+    {{ c.field("username", "ชื่อผู้ใช้", value=values["username"], error=errors.get("username"), required=true, autocomplete="off",
+               help="3-64 ตัวอักษร", attrs={"maxlength": 64, "autocapitalize": "none", "spellcheck": "false"}) }}
+    <div></div>
+    {{ c.password_field("password", "รหัสผ่านใหม่", error=errors.get("password"), autocomplete="new-password", help="อย่างน้อย 10 ตัวอักษร") }}
+    {{ c.password_field("password2", "ยืนยันรหัสผ่าน", error=errors.get("password2"), autocomplete="new-password") }}
+  </div>
+  <div class="form-actions">{{ c.button("สร้างผู้ดูแล", icon="plus") }}</div>
+  {% endcall %}
+</form>
+{% endblock %}

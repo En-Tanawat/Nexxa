@@ -1,0 +1,29 @@
+{%- extends "base_admin.html" -%}
+{%- set active = "station" -%}
+{% block title %}สถานี{% endblock %}
+{% block content %}
+{% call c.page_header("สถานีตรวจ", eyebrow="จัดการข้อมูล", text="สถานีแต่ละจุดผูกกับแท็ก RFID ที่หุ่นยนต์อ่านได้ และผูกกับชนิดผักที่ปลูกอยู่") %}
+  {{ c.button("เพิ่มสถานี", href="/admin/stations/new", icon="plus") }}
+{% endcall %}
+
+{{ c.search_form("/admin/stations", q, "ค้นหาสถานี", "ชื่อสถานีหรือรหัส RFID") }}
+
+{% call c.data_table([("ลำดับ", "num"), "ชื่อสถานี", "RFID", "ชนิดผัก", "สถานะ", "จัดการ"], stations | length, "รายการสถานี",
+    empty_title=("ยังไม่มีสถานี" if total == 0 else "ไม่พบสถานีที่ตรงกับคำค้น"),
+    empty_text=("เพิ่มสถานีแรกเพื่อให้หุ่นยนต์ส่งภาพเข้าระบบได้" if total == 0 else "ลองค้นด้วยคำอื่น หรือกดล้างการค้นหา"),
+    empty_href=("/admin/stations/new" if total == 0 else none), empty_label="เพิ่มสถานี") %}
+  {%- for s in stations %}
+  <tr>
+    <td class="num" data-label="ลำดับ">{{ s.route_order if s.route_order is not none else "-" }}</td>
+    <td data-label="ชื่อสถานี"><strong>{{ s.name }}</strong>{% if s.kind == "home" %} {{ c.badge("info", "จุดเริ่มต้น") }}{% endif %}</td>
+    <td data-label="RFID"><code>{{ s.rfid_uid }}</code></td>
+    <td data-label="ชนิดผัก">{{ crops.get(s.crop_id, "-") }}</td>
+    <td data-label="สถานะ">{% if s.active %}{{ c.badge("ok", "เปิดใช้งาน") }}{% else %}{{ c.badge("neutral", "ปิดใช้งาน") }}{% endif %}</td>
+    <td data-label="จัดการ"><div class="actions">
+      {{ c.button("แก้ไข", variant="secondary", size="sm", icon="edit", href="/admin/stations/" ~ s.id ~ "/edit", attrs={"aria-label": "แก้ไข " ~ s.name}) }}
+      {{ c.button("ลบ", variant="danger", size="sm", icon="trash", href="/admin/stations/" ~ s.id ~ "/delete", attrs={"aria-label": "ลบ " ~ s.name}) }}
+    </div></td>
+  </tr>
+  {%- endfor %}
+{% endcall %}
+{% endblock %}

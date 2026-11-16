@@ -1,0 +1,29 @@
+{%- extends "base_admin.html" -%}
+{%- set active = "batch" -%}
+{% block title %}ล็อตผัก{% endblock %}
+{% block content %}
+{% call c.page_header("ล็อตผัก", eyebrow="จัดการข้อมูล", text="บันทึกรอบการปลูกของแต่ละสถานี เพื่อใช้แยกสถิติและเปรียบเทียบสุขภาพผักตามรุ่น") %}
+  {{ c.button("เพิ่มล็อต", href="/admin/batches/new", icon="plus") }}
+{% endcall %}
+
+{{ c.search_form("/admin/batches", q, "ค้นหาล็อต", "สถานี ชนิดผัก หรือหมายเหตุ") }}
+
+{% call c.data_table(["สถานี", "ชนิดผัก", "วันที่ปลูก", "วันที่เก็บเกี่ยว", "สถานะ", "จัดการ"], rows | length, "รายการล็อตผัก",
+    empty_title=("ยังไม่มีล็อตผัก" if total == 0 else "ไม่พบล็อตที่ตรงกับคำค้น"),
+    empty_text=("เพิ่มล็อตแรกเมื่อเริ่มปลูกผักที่สถานี" if total == 0 else "ลองค้นด้วยคำอื่น หรือกดล้างการค้นหา"),
+    empty_href=("/admin/batches/new" if total == 0 else none), empty_label="เพิ่มล็อต") %}
+  {%- for b, station_name, crop_name in rows %}
+  <tr>
+    <td data-label="สถานี"><strong>{{ station_name }}</strong></td>
+    <td data-label="ชนิดผัก">{{ crop_name }}</td>
+    <td data-label="วันที่ปลูก">{{ b.planted_on.isoformat() }}</td>
+    <td data-label="วันที่เก็บเกี่ยว">{{ b.harvested_on.isoformat() if b.harvested_on else "-" }}</td>
+    <td data-label="สถานะ">{% if b.harvested_on %}{{ c.badge("neutral", "เก็บเกี่ยวแล้ว") }}{% else %}{{ c.badge("ok", "กำลังปลูก") }}{% endif %}</td>
+    <td data-label="จัดการ"><div class="actions">
+      {{ c.button("แก้ไข", variant="secondary", size="sm", icon="edit", href="/admin/batches/" ~ b.id ~ "/edit", attrs={"aria-label": "แก้ไขล็อต " ~ station_name ~ " " ~ b.planted_on.isoformat()}) }}
+      {{ c.button("ลบ", variant="danger", size="sm", icon="trash", href="/admin/batches/" ~ b.id ~ "/delete", attrs={"aria-label": "ลบล็อต " ~ station_name ~ " " ~ b.planted_on.isoformat()}) }}
+    </div></td>
+  </tr>
+  {%- endfor %}
+{% endcall %}
+{% endblock %}

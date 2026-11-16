@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 from app import main
 from app.create_admin import create_or_update
 from app.db import get_session, init_db
-from app.web import deps, routes_auth, security
+from app.web import deps, routes_admin, routes_auth, security
 from app.web.security import LoginThrottle
 
 SECRET = "test-only-session-secret-0123456789"  # test-only value
@@ -91,6 +91,7 @@ def test_require_csrf_keeps_form_for_endpoint_and_flash_shows_once(engine, admin
 
     api = FastAPI()
     api.include_router(routes_auth.router)
+    api.include_router(routes_admin.router)
 
     @api.post("/admin/thing", dependencies=[Depends(deps.require_csrf)])
     def thing(request: Request, name: str = Form()):

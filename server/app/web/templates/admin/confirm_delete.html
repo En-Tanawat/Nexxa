@@ -1,0 +1,23 @@
+{%- extends "base_admin.html" -%}
+{% block title %}{{ heading }}{% endblock %}
+{% block content %}
+{{ c.page_header(heading, eyebrow="ยืนยันการลบ") }}
+{% call c.card("ตรวจสอบอีกครั้งก่อนลบ", subtitle=note, icon="trash") %}
+  <p class="confirm__item">{{ item }}</p>
+  {%- if blocked %}
+  {{ c.alert("warn", blocked[0], title="ลบรายการนี้ไม่ได้", role="alert") }}
+  <div class="form-actions">
+    {{ c.button(blocked[2], href=blocked[1], icon="arrow-right") }}
+    {{ c.button("กลับ", variant="ghost", href=back) }}
+  </div>
+  {%- else %}
+  <form class="form" method="post" action="{{ action }}" data-busy-form>
+    {{ c.csrf_field() }}
+    <div class="form-actions">
+      {{ c.button("ยืนยันลบ", variant="danger", icon="trash") }}
+      {{ c.button("ยกเลิก", variant="ghost", href=back) }}
+    </div>
+  </form>
+  {%- endif %}
+{% endcall %}
+{% endblock %}

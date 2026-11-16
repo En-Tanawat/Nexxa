@@ -1,0 +1,34 @@
+{%- extends "base_admin.html" -%}
+{%- set active = "batch" -%}
+{% block title %}{{ "แก้ไขล็อตผัก" if batch_id else "เพิ่มล็อตผัก" }}{% endblock %}
+{% block content %}
+{{ c.page_header("แก้ไขล็อตผัก" if batch_id else "เพิ่มล็อตผัก", eyebrow="ล็อตผัก") }}
+{%- if errors %}{{ c.alert("danger", "มี " ~ errors | length ~ " ช่องที่ต้องแก้ไข ดูข้อความสีแดงใต้แต่ละช่อง", title="บันทึกไม่สำเร็จ", role="alert") }}{% endif %}
+
+<form class="form" method="post" action="{{ ('/admin/batches/' ~ batch_id) if batch_id else '/admin/batches' }}" data-busy-form>
+  {{ c.csrf_field() }}
+  {% call c.card("ปลูกที่ไหน อะไร", subtitle="เลือกสถานีตรวจและชนิดผักของล็อตนี้", icon="station") %}
+  <div class="form-grid">
+    {{ c.select("station_id", "สถานี", stations, value=values["station_id"], error=errors.get("station_id"), required=true,
+                placeholder="เลือกสถานี", help="เลือกได้เฉพาะสถานีตรวจ (ไม่รวมจุดเริ่มต้น)") }}
+    {{ c.select("crop_id", "ชนิดผัก", crops, value=values["crop_id"], error=errors.get("crop_id"), required=true, placeholder="เลือกชนิดผัก") }}
+  </div>
+  {% endcall %}
+
+  {% call c.card("ช่วงเวลา", subtitle="วันที่ปลูกและวันที่เก็บเกี่ยว", icon="batch") %}
+  <div class="form-grid">
+    {{ c.field("planted_on", "วันที่ปลูก", type="date", value=values["planted_on"], error=errors.get("planted_on"), required=true) }}
+    {{ c.field("harvested_on", "วันที่เก็บเกี่ยว", type="date", value=values["harvested_on"], error=errors.get("harvested_on"),
+               help="เว้นว่างไว้ถ้ายังไม่เก็บเกี่ยว ต้องไม่ก่อนวันที่ปลูก") }}
+    <div class="form-grid__wide">
+      {{ c.textarea("notes", "หมายเหตุ", value=values["notes"], rows=3, error=errors.get("notes"), help="ไม่เกิน 2000 ตัวอักษร (ไม่บังคับ)") }}
+    </div>
+  </div>
+  {% endcall %}
+
+  <div class="form-actions">
+    {{ c.button("บันทึกล็อต", icon="ok") }}
+    {{ c.button("ยกเลิก", variant="ghost", href="/admin/batches") }}
+  </div>
+</form>
+{% endblock %}

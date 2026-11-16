@@ -1,7 +1,7 @@
 /* NEXXA design system — tokens from design-system/nexxa/MASTER.md.
    Dark "operations control room": navy ground, green status accent, glass surfaces.
    Sections: 1 tokens · 2 base · 3 type · 4 brand · 5 buttons · 6 forms · 7 surfaces · 8 feedback
-             9 data · 10 auth layout · 11 admin shell · 12 admin home · 13 responsive · 14 motion */
+             9 data · 10 auth layout · 11 admin shell · 12 admin home · 13 responsive · 14 motion · 15 admin CRUD */
 
 /* 1. Tokens ---------------------------------------------------------------- */
 :root {
@@ -599,6 +599,35 @@ code, pre { font-family: var(--font-mono); font-size: 0.9em; }
   .auth__head { align-items: flex-start; }
   .icon-tile--lg { width: 42px; height: 42px; }
 }
+
+/* 15. Admin CRUD (lists, forms, confirm, pager) ---------------------------------- */
+.toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-sm); }
+.toolbar .field { flex: 1 1 16rem; max-width: 28rem; }
+.table .actions { flex-wrap: wrap; }
+.table .nowrap { white-space: nowrap; }
+.table .cell-wrap { min-width: 14ch; max-width: 36ch; overflow-wrap: anywhere; }
+.table td code { font-size: var(--text-xs); color: var(--color-subtle-foreground); overflow-wrap: anywhere; }
+.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-md) var(--space-lg); align-items: start; }
+.form-grid--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.form-grid__wide { grid-column: 1 / -1; }
+.form-actions { display: flex; flex-wrap: wrap; gap: var(--space-sm); margin-top: var(--space-md); }
+/* < 768px: table rows become labelled cards (td[data-label]) instead of a sideways-scrolling table. */
+@media (max-width: 767.98px) {
+  .form-grid, .form-grid--3 { grid-template-columns: minmax(0, 1fr); }
+  .table--stack thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .table--stack, .table--stack tbody, .table--stack tr, .table--stack td { display: block; }
+  .table--stack tr { padding: 0.5rem 1rem; border-bottom: 1px solid var(--glass-border-strong); }
+  .table--stack tbody tr:last-child { border-bottom: 0; }
+  .table--stack td { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); padding: 0.4rem 0; border: 0; text-align: right; }
+  .table--stack td::before { content: attr(data-label); flex: 0 0 auto; font-size: var(--text-xs); font-weight: 600; color: var(--color-muted-foreground); text-align: left; }
+  .table--stack td.num { text-align: right; }
+  .table--stack td[data-label="จัดการ"] { justify-content: flex-end; padding-top: 0.6rem; }
+  .table--stack td[data-label="จัดการ"]::before { content: none; }
+  .table--stack .cell-wrap { max-width: none; min-width: 0; }
+}
+.confirm__item { margin-bottom: var(--space-md); padding: 0.75rem 1rem; border-radius: var(--radius-md); background: rgba(11, 18, 34, 0.6); border: 1px solid var(--glass-border-strong); font-weight: 600; overflow-wrap: anywhere; }
+.pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: var(--space-md); }
+.pager__info { font-size: var(--text-sm); color: var(--color-subtle-foreground); }
 
 /* 14. Motion --------------------------------------------------------------- */
 @media (prefers-reduced-motion: no-preference) {

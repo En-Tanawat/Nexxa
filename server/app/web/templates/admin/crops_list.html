@@ -1,0 +1,27 @@
+{%- extends "base_admin.html" -%}
+{%- set active = "crop" -%}
+{% block title %}ชนิดผัก{% endblock %}
+{% block content %}
+{% call c.page_header("ชนิดผัก", eyebrow="จัดการข้อมูล", text="กำหนดป้ายกำกับและคำสั่งที่ AI ใช้จัดประเภทใบผักของแต่ละชนิด") %}
+  {{ c.button("เพิ่มชนิดผัก", href="/admin/crops/new", icon="plus") }}
+{% endcall %}
+
+{{ c.search_form("/admin/crops", q, "ค้นหาชนิดผัก", "ชื่อชนิดผัก") }}
+
+{% call c.data_table(["ชนิดผัก", "ป้ายกำกับ", ("ใช้ในสถานี", "num"), "จัดการ"], crops | length, "รายการชนิดผัก",
+    empty_title=("ยังไม่มีชนิดผัก" if total == 0 else "ไม่พบชนิดผักที่ตรงกับคำค้น"),
+    empty_text=("เพิ่มชนิดผักก่อน เพื่อใช้กับสถานีและล็อตผัก" if total == 0 else "ลองค้นด้วยคำอื่น หรือกดล้างการค้นหา"),
+    empty_href=("/admin/crops/new" if total == 0 else none), empty_label="เพิ่มชนิดผัก") %}
+  {%- for crop in crops %}
+  <tr>
+    <td data-label="ชนิดผัก"><strong>{{ crop.name }}</strong></td>
+    <td class="cell-wrap" data-label="ป้ายกำกับ">{{ crop.labels | join(", ") }}</td>
+    <td class="num" data-label="ใช้ในสถานี">{{ used.get(crop.id, 0) }}</td>
+    <td data-label="จัดการ"><div class="actions">
+      {{ c.button("แก้ไข", variant="secondary", size="sm", icon="edit", href="/admin/crops/" ~ crop.id ~ "/edit", attrs={"aria-label": "แก้ไข " ~ crop.name}) }}
+      {{ c.button("ลบ", variant="danger", size="sm", icon="trash", href="/admin/crops/" ~ crop.id ~ "/delete", attrs={"aria-label": "ลบ " ~ crop.name}) }}
+    </div></td>
+  </tr>
+  {%- endfor %}
+{% endcall %}
+{% endblock %}

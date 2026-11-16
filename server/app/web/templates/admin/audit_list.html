@@ -1,0 +1,21 @@
+{%- extends "base_admin.html" -%}
+{%- set active = "audit" -%}
+{% block title %}บันทึกการเปลี่ยนแปลง{% endblock %}
+{% block content %}
+{{ c.page_header("บันทึกการเปลี่ยนแปลง", eyebrow="ความปลอดภัย", text="ทุกการสร้าง แก้ไข และลบข้อมูลโดยผู้ดูแล เรียงจากใหม่ไปเก่า (เวลาประเทศไทย) ไม่มีรหัสผ่านหรือคีย์ในบันทึกนี้") }}
+
+{% call c.data_table(["เวลา", "ผู้ดำเนินการ", "การกระทำ", "เป้าหมาย", "รายละเอียด"], rows | length, "บันทึกการเปลี่ยนแปลง",
+    empty_title="ยังไม่มีบันทึก", empty_text="เมื่อมีการสร้าง แก้ไข หรือลบข้อมูล รายการจะปรากฏที่นี่") %}
+  {%- for r in rows %}
+  <tr>
+    <td class="nowrap" data-label="เวลา">{{ r.at }}</td>
+    <td data-label="ผู้ดำเนินการ">{{ r.actor }}</td>
+    <td data-label="การกระทำ">{{ r.action }}</td>
+    <td class="cell-wrap" data-label="เป้าหมาย">{{ r.target }}</td>
+    <td class="cell-wrap" data-label="รายละเอียด">{{ r.detail }}</td>
+  </tr>
+  {%- endfor %}
+{% endcall %}
+
+{%- if pages > 1 %}{{ c.pager(page, pages, "/admin/audit?page=") }}{% endif %}
+{% endblock %}

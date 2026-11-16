@@ -1,0 +1,44 @@
+{%- extends "base_admin.html" -%}
+{%- set active = "station" -%}
+{% block title %}{{ "แก้ไขสถานี" if station_id else "เพิ่มสถานี" }}{% endblock %}
+{% block content %}
+{{ c.page_header("แก้ไขสถานี" if station_id else "เพิ่มสถานี", eyebrow="สถานีตรวจ") }}
+{%- if errors %}{{ c.alert("danger", "มี " ~ errors | length ~ " ช่องที่ต้องแก้ไข ดูข้อความสีแดงใต้แต่ละช่อง", title="บันทึกไม่สำเร็จ", role="alert") }}{% endif %}
+
+<form class="form" method="post" action="{{ ('/admin/stations/' ~ station_id) if station_id else '/admin/stations' }}" data-busy-form>
+  {{ c.csrf_field() }}
+  {% call c.card("ข้อมูลสถานี", subtitle="ชื่อและแท็กที่ใช้ระบุสถานีนี้", icon="station") %}
+  <div class="form-grid">
+    {{ c.field("rfid_uid", "รหัสแท็ก RFID", value=values["rfid_uid"], error=errors.get("rfid_uid"), required=true,
+               help="ตัวอักษร ตัวเลข และ : _ . - เท่านั้น ห้ามซ้ำกับสถานีอื่น", attrs={"maxlength": 64, "autocomplete": "off", "spellcheck": "false"}) }}
+    {{ c.field("name", "ชื่อสถานี", value=values["name"], error=errors.get("name"), required=true, attrs={"maxlength": 120}) }}
+    <div class="form-grid__wide">
+      {{ c.textarea("description", "คำอธิบาย", value=values["description"], rows=3, error=errors.get("description"), help="ไม่เกิน 2000 ตัวอักษร (ไม่บังคับ)") }}
+    </div>
+  </div>
+  {% endcall %}
+
+  {% call c.card("การใช้งาน", subtitle="ประเภท ชนิดผัก และสถานะของสถานี", icon="crop") %}
+  <div class="form-grid form-grid--3">
+    {{ c.select("kind", "ประเภท", [("station", "สถานีตรวจ"), ("home", "จุดเริ่มต้น")], value=values["kind"], error=errors.get("kind"), required=true,
+                help="จุดเริ่มต้นสร้างล็อตผักไม่ได้") }}
+    {{ c.select("crop_id", "ชนิดผัก", crops, value=values["crop_id"], error=errors.get("crop_id"), placeholder="ยังไม่ระบุ") }}
+    {{ c.select("active", "สถานะ", [("1", "เปิดใช้งาน"), ("0", "ปิดใช้งาน")], value=values["active"], error=errors.get("active"), required=true,
+                help="ปิดใช้งานแทนการลบ เมื่อสถานีมีประวัติภาพแล้ว") }}
+  </div>
+  {% endcall %}
+
+  {% call c.card("ตำแหน่งบนเส้นทาง", subtitle="ใช้เรียงลำดับและแสดงบนแผนที่ (ไม่บังคับ)", icon="activity") %}
+  <div class="form-grid form-grid--3">
+    {{ c.field("route_order", "ลำดับในเส้นทาง", type="number", value=values["route_order"], error=errors.get("route_order"), attrs={"min": 0, "max": 9999, "step": 1, "inputmode": "numeric"}) }}
+    {{ c.field("map_x", "ตำแหน่ง X", type="number", value=values["map_x"], error=errors.get("map_x"), attrs={"step": "any", "inputmode": "decimal"}) }}
+    {{ c.field("map_y", "ตำแหน่ง Y", type="number", value=values["map_y"], error=errors.get("map_y"), attrs={"step": "any", "inputmode": "decimal"}) }}
+  </div>
+  {% endcall %}
+
+  <div class="form-actions">
+    {{ c.button("บันทึกสถานี", icon="ok") }}
+    {{ c.button("ยกเลิก", variant="ghost", href="/admin/stations") }}
+  </div>
+</form>
+{% endblock %}

@@ -3,13 +3,13 @@ import time
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db import get_session
-from app.models import AdminUser, Batch, DeviceKey, ProviderKey, Station
-from app.web import deps, secretbox, security
+from app.models import AdminUser
+from app.web import deps, security
 from app.web.templating import render
 
 router = APIRouter()
@@ -86,16 +86,8 @@ def logout():
     return response
 
 
-@router.get("/admin")
-def admin_home(request: Request, admin: AdminUser = Depends(deps.require_admin), session: Session = Depends(get_session)):
-    count = session.scalar
-    stats = {
-        "stations": count(select(func.count(Station.id)).where(Station.kind != "home")),
-        "stations_active": count(select(func.count(Station.id)).where(Station.kind != "home", Station.active)),
-        "batches": count(select(func.count(Batch.id))),
-        "batches_growing": count(select(func.count(Batch.id)).where(Batch.harvested_on.is_(None))),
-        "ai_keys": count(select(func.count(ProviderKey.id))),
-        "ai_keys_active": count(select(func.count(ProviderKey.id)).where(ProviderKey.active)),
-        "devices": count(select(func.count(DeviceKey.id)).where(DeviceKey.revoked_at.is_(None))),
-    }
-    return render(request, "admin_home.html", stats=stats, secrets_enabled=secretbox.secrets_enabled())
+async def csrf_error_page(request: Request, exc: deps.CsrfError):
+    """Registered in main.py: a friendly Thai 403 page for forms, JSON for /api/."""
+    if request.url.path.startswith("/api/"):
+        return JSONResponse({"detail": exc.detail}, status_code=403)
+    return render(request, "error.html", status_code=403, title="แบบฟอร์มหมดอายุ", message=exc.detail)

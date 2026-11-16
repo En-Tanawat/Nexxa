@@ -13,7 +13,7 @@ from app.db import engine, get_session, init_db
 from app.models import Analysis, Capture, Crop, Round, Station
 from app.quality import ImageDecodeError, check_quality
 from app.seed import seed
-from app.web import routes_auth
+from app.web import deps, routes_admin, routes_auth
 from app.web.templating import STATIC_DIR
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
@@ -73,6 +73,8 @@ async def page_security_headers(request: Request, call_next):
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 app.include_router(routes_auth.router)
+app.include_router(routes_admin.router)
+app.add_exception_handler(deps.CsrfError, routes_auth.csrf_error_page)
 
 
 def require_device_key(x_device_key: str | None = Header(None)) -> None:

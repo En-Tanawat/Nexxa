@@ -1,0 +1,29 @@
+{%- extends "base_admin.html" -%}
+{%- set active = "crop" -%}
+{% block title %}{{ "แก้ไขชนิดผัก" if crop_id else "เพิ่มชนิดผัก" }}{% endblock %}
+{% block content %}
+{{ c.page_header("แก้ไขชนิดผัก" if crop_id else "เพิ่มชนิดผัก", eyebrow="ชนิดผัก") }}
+{%- if errors %}{{ c.alert("danger", "มี " ~ errors | length ~ " ช่องที่ต้องแก้ไข ดูข้อความสีแดงใต้แต่ละช่อง", title="บันทึกไม่สำเร็จ", role="alert") }}{% endif %}
+
+<form class="form" method="post" action="{{ ('/admin/crops/' ~ crop_id) if crop_id else '/admin/crops' }}" data-busy-form>
+  {{ c.csrf_field() }}
+  {% call c.card("ข้อมูลชนิดผัก", subtitle="ชื่อที่แสดงในระบบ", icon="crop") %}
+  {{ c.field("name", "ชื่อชนิดผัก", value=values["name"], error=errors.get("name"), required=true, attrs={"maxlength": 120}) }}
+  {% endcall %}
+
+  {% call c.card("การวิเคราะห์ด้วย AI", subtitle="ป้ายกำกับและคำสั่งที่ใช้จัดประเภทใบ", icon="ai") %}
+  <div class="form">
+    {{ c.textarea("labels", "ป้ายกำกับ", value=values["labels"], rows=5, error=errors.get("labels"), required=true,
+                  help="หนึ่งป้ายต่อหนึ่งบรรทัด หรือคั่นด้วยเครื่องหมายจุลภาค ห้ามว่างและห้ามซ้ำ (สูงสุด 20 ป้าย)") }}
+    {{ c.textarea("prompt", "คำสั่งสำหรับ AI", value=values["prompt"], rows=5, error=errors.get("prompt"), required=true,
+                  help="อธิบายให้ AI รู้ว่าต้องดูอะไรในภาพ (ไม่เกิน 2000 ตัวอักษร)") }}
+    {{ c.textarea("notes", "หมายเหตุ", value=values["notes"], rows=3, error=errors.get("notes"), help="เช่น ข้อสังเกตเพิ่มเติมที่ส่งให้ AI (ไม่บังคับ)") }}
+  </div>
+  {% endcall %}
+
+  <div class="form-actions">
+    {{ c.button("บันทึกชนิดผัก", icon="ok") }}
+    {{ c.button("ยกเลิก", variant="ghost", href="/admin/crops") }}
+  </div>
+</form>
+{% endblock %}
