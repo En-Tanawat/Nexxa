@@ -1,0 +1,83 @@
+{%- extends "base_site.html" -%}
+{%- set active = "trends" -%}
+{% block title %}กราฟแนวโน้ม{% endblock %}
+{% block head %}
+  <meta name="description" content="แนวโน้มอาการใบเหลือง จุดน้ำตาล และภาพที่ถูกปฏิเสธของแต่ละสถานีในโรงเรือน NEXXA">
+  {#- Chart.js is vendored (static/vendor/VENDOR.md); never loaded from a CDN. -#}
+  <script src="/static/vendor/chartjs-4.5.1/chart.umd.min.js" defer></script>
+  <script src="/static/js/trends.js" type="module"></script>
+{% endblock %}
+
+{% import "_components.html" as c with context %}
+{#- One chart card: summary text, legend (colour + dash + marker), canvas, and the same numbers as a table. -#}
+{% macro chart_card(key, title, subtitle, icon) -%}
+<section class="card chart-card" aria-labelledby="{{ key }}-title" data-chart="{{ key }}">
+  <header class="card__head">
+    <span class="icon-tile">{{ c.icon(icon, 20) }}</span>
+    <div><h2 class="card__title" id="{{ key }}-title">{{ title }}</h2><p class="card__subtitle">{{ subtitle }}</p></div>
+  </header>
+  <p class="chart-summary" id="{{ key }}-summary">กำลังโหลดข้อมูล…</p>
+  <ul class="legend" id="{{ key }}-legend" role="list" aria-label="คำอธิบายเส้นกราฟ: {{ title }}"></ul>
+  <div class="chart-box" id="{{ key }}-box" data-state="loading">
+    <canvas id="{{ key }}-canvas" role="img" aria-label="กราฟเส้น{{ title }}" aria-describedby="{{ key }}-summary"></canvas>
+    <p class="chart-box__msg" id="{{ key }}-msg">กำลังโหลดกราฟ…</p>
+  </div>
+  <details class="data-details">
+    <summary>ดูตารางข้อมูลของกราฟนี้</summary>
+    <div class="table-wrap" id="{{ key }}-table" tabindex="0" role="region" aria-label="ตารางข้อมูล: {{ title }}"></div>
+  </details>
+</section>
+{%- endmacro %}
+
+{% block content %}
+{{ c.page_header("กราฟแนวโน้ม", eyebrow="แดชบอร์ดสาธารณะ", text="อัตราอาการของผักแต่ละสถานีตามช่วงเวลา เทียบล็อตที่อายุเท่ากัน และอัตราภาพที่ถูกปฏิเสธ") }}
+
+<div id="demo-banner"{% if not demo %} hidden{% endif %}>
+  {{ c.alert("info", "ข้อมูลที่เห็นในหน้านี้เป็นตัวอย่างสำหรับสาธิตระบบ ไม่ใช่ข้อมูลจริงของโรงเรือน", title="ข้อมูลตัวอย่าง (DEMO)") }}
+</div>
+
+<noscript><p class="note">หน้านี้ต้องเปิดใช้ JavaScript เพื่อวาดกราฟ</p></noscript>
+
+<div id="trends-empty"{% if has_data %} hidden{% endif %}>
+  <div class="empty-state">
+    <span class="empty-state__icon">{{ c.icon("chart", 28) }}</span>
+    <p class="empty-state__title">ยังไม่มีข้อมูลสำหรับวาดกราฟ</p>
+    <p class="empty-state__text">กราฟจะปรากฏหลังจากหุ่นยนต์ส่งภาพผักเข้ามาและระบบสรุปผลรายวันแล้ว ลองกลับมาดูอีกครั้งภายหลัง</p>
+    <a class="btn btn--secondary btn--sm" href="/">{{ c.icon("overview", 18) }}<span class="btn__label">กลับไปแดชบอร์ด</span></a>
+  </div>
+</div>
+
+<div class="stack-lg" id="trends-charts"{% if not has_data %} hidden{% endif %}>
+  <div class="card trends-toolbar">
+    <div class="field">
+      <span class="field__label" id="range-label">ช่วงเวลา</span>
+      <div class="seg" role="group" aria-labelledby="range-label">
+        <button class="seg__btn" type="button" data-days="7" aria-pressed="false">7 วัน</button>
+        <button class="seg__btn" type="button" data-days="30" aria-pressed="true">30 วัน</button>
+        <button class="seg__btn" type="button" data-days="100" aria-pressed="false">100 วัน</button>
+      </div>
+    </div>
+    <div class="field">
+      <label class="field__label" for="station-filter">สถานี</label>
+      <div class="select-wrap"><select class="input select" id="station-filter"><option value="">ทุกสถานี</option></select></div>
+    </div>
+    <p class="trends-status" id="trends-status" aria-live="polite">กำลังโหลดกราฟ…</p>
+  </div>
+
+  <div class="alert-bar" id="trends-error" role="alert" hidden>
+    <div class="alert alert--warn">
+      {{ c.icon("warn", 20) }}
+      <div class="alert__body"><p class="alert__title">โหลดข้อมูลกราฟไม่สำเร็จ</p><p id="trends-error-text"></p></div>
+      <button class="btn btn--secondary btn--sm" type="button" id="trends-retry">{{ c.icon("refresh", 18) }}<span class="btn__label">ลองใหม่</span></button>
+    </div>
+  </div>
+
+  <div class="chart-grid">
+    {{ chart_card("yellow", "อัตราใบเหลืองรายสถานี", "สัดส่วนใบเหลืองต่อภาพที่วิเคราะห์ได้ในแต่ละวัน", "warn") }}
+    {{ chart_card("brown", "อัตราจุดน้ำตาลรายสถานี", "สัดส่วนจุดน้ำตาลต่อภาพที่วิเคราะห์ได้ในแต่ละวัน", "danger") }}
+    {{ chart_card("sameage", "เทียบล็อตที่อายุเท่ากัน", "อัตราผิดปกติ (ใบเหลือง + จุดน้ำตาล) ตามอายุนับจากวันปลูก", "batch") }}
+    {{ chart_card("rejected", "อัตราภาพที่ถูกปฏิเสธ", "ภาพที่คุณภาพไม่ผ่าน เช่น เบลอหรือมืดเกินไป", "camera") }}
+  </div>
+  <p class="note">อัตราคำนวณต่อสถานีรายวัน ค่าว่างแปลว่าวันนั้นไม่มีภาพที่วิเคราะห์ได้ · วันนับตามเวลา UTC</p>
+</div>
+{% endblock %}

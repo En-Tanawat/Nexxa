@@ -1,0 +1,156 @@
+{%- extends "base_site.html" -%}
+{%- set active = "dashboard" -%}
+{% block title %}แดชบอร์ดโรงเรือน{% endblock %}
+{% block head %}
+  <meta name="description" content="สถานะผักและสุขภาพของโรงเรือนแบบสด ๆ จากระบบตรวจอัตโนมัติ NEXXA">
+  <script src="/static/js/dashboard.js" type="module"></script>
+{% endblock %}
+
+{% block bar_status %}
+<p class="badge badge--neutral live-pill" id="fresh-pill" data-state="loading">
+  {{ c.icon("refresh", 14, "icon--loading") }}{{ c.icon("ok", 14, "icon--fresh") }}{{ c.icon("warn", 14, "icon--stale") }}{{ c.icon("danger", 14, "icon--error") }}
+  <span id="fresh-label">กำลังโหลดข้อมูล</span>
+  <span class="live-pill__time" id="fresh-time" hidden>· <span class="sr-only">อัปเดตล่าสุด </span><time id="updated-at"></time></span>
+</p>
+{% endblock %}
+
+{% block content %}
+{{ c.page_header("ภาพรวมโรงเรือน", eyebrow="แดชบอร์ดสาธารณะ", text="สุขภาพผักของแต่ละสถานีและสิ่งที่ต้องทำวันนี้ อัปเดตอัตโนมัติทุก 1 นาที") }}
+
+<div id="demo-banner"{% if not demo %} hidden{% endif %}>
+  {{ c.alert("info", "ข้อมูลที่เห็นในหน้านี้เป็นตัวอย่างสำหรับสาธิตระบบ ไม่ใช่ข้อมูลจริงของโรงเรือน", title="ข้อมูลตัวอย่าง (DEMO)") }}
+</div>
+
+<div class="alert-bar" id="error-banner" role="alert" hidden>
+  <div class="alert alert--warn">
+    {{ c.icon("warn", 20) }}
+    <div class="alert__body"><p class="alert__title">โหลดข้อมูลไม่สำเร็จ</p><p id="error-text"></p></div>
+    <button class="btn btn--secondary btn--sm" type="button" id="retry-btn">{{ c.icon("refresh", 18) }}<span class="btn__label">ลองใหม่</span></button>
+  </div>
+</div>
+
+<noscript><p class="note">หน้านี้ต้องเปิดใช้ JavaScript เพื่อแสดงข้อมูลล่าสุดของโรงเรือน</p></noscript>
+
+<div id="dashboard-empty"{% if has_data %} hidden{% endif %}>
+  <div class="empty-state">
+    <span class="empty-state__icon">{{ c.icon("station", 28) }}</span>
+    <p class="empty-state__title">ยังไม่มีข้อมูลจากโรงเรือน</p>
+    <p class="empty-state__text">เมื่อผู้ดูแลเพิ่มสถานีตรวจและหุ่นยนต์เริ่มส่งภาพผักเข้ามา ตัวเลข สถานะรายสถานี และกราฟแนวโน้มจะปรากฏที่นี่โดยอัตโนมัติ</p>
+    <a class="btn btn--primary btn--sm" href="/login">{{ c.icon("user", 18) }}<span class="btn__label">เข้าสู่ระบบผู้ดูแล</span></a>
+  </div>
+</div>
+
+{%- set kpis = [
+  ("stations", "station", "สถานีที่ใช้งาน", "สถานีตรวจที่เปิดอยู่"),
+  ("captures", "camera", "ภาพที่ตรวจวันนี้", "นับวันตามเวลา UTC (เริ่ม 07:00 น.)"),
+  ("abnormal", "warn", "อัตราผิดปกติวันนี้", "ใบเหลือง + จุดน้ำตาล จากภาพที่วิเคราะห์ได้"),
+  ("review", "eye", "รอตรวจทาน", "ภาพที่ AI ไม่มั่นใจ ภายใน 7 วันล่าสุด"),
+  ("harvest", "batch", "ล็อตใกล้เก็บเกี่ยว", "คำนวณจากรอบเก็บเกี่ยว 45 วัน (ค่าสมมติ)"),
+] -%}
+<ul class="kpi-grid" id="kpi-grid" role="list" aria-label="ตัวเลขสำคัญวันนี้"{% if not has_data %} hidden{% endif %}>
+  {%- for key, icon, label, note in kpis %}
+  <li>
+    <section class="card kpi is-loading" aria-labelledby="kpi-{{ key }}-label">
+      <div class="kpi__top"><span class="icon-tile">{{ c.icon(icon, 20) }}</span><h2 class="kpi__label" id="kpi-{{ key }}-label">{{ label }}</h2></div>
+      <p class="kpi__value" id="kpi-{{ key }}">–</p>
+      <p class="kpi__meta" id="kpi-{{ key }}-meta">{{ note }}</p>
+    </section>
+  </li>
+  {%- endfor %}
+</ul>
+
+<div class="stack-lg" id="dashboard-main"{% if not has_data %} hidden{% endif %}>
+  <div class="dash-grid">
+    <section class="card panel" aria-labelledby="twin-title">
+      <header class="card__head">
+        <span class="icon-tile">{{ c.icon("overview", 20) }}</span>
+        <div><h2 class="card__title" id="twin-title">แผนผังโรงเรือน</h2><p class="card__subtitle">ตำแหน่งสถานีและสถานะล่าสุด</p></div>
+      </header>
+      {#- Task 8 mounts the three.js scene here. The box keeps its size so nothing shifts when it replaces the placeholder. -#}
+      <div class="twin-root" id="twin-root" role="region" aria-label="แผนผัง 3 มิติของโรงเรือน">
+        <div class="twin-ph">
+          <svg class="twin-ph__art" viewBox="0 0 360 200" fill="none" aria-hidden="true" focusable="false">
+            <rect class="ph-floor" x="12" y="12" width="336" height="176" rx="22"/>
+            <rect class="ph-bed" x="40" y="38" width="120" height="30" rx="10"/>
+            <rect class="ph-bed" x="200" y="38" width="120" height="30" rx="10"/>
+            <rect class="ph-bed" x="40" y="86" width="120" height="30" rx="10"/>
+            <rect class="ph-bed" x="200" y="86" width="120" height="30" rx="10"/>
+            <rect class="ph-bed" x="40" y="134" width="120" height="30" rx="10"/>
+            <rect class="ph-bed" x="200" y="134" width="120" height="30" rx="10"/>
+            <path class="ph-route" d="M180 176V28M180 28H340"/>
+            <circle class="ph-dot" cx="100" cy="53" r="7"/><circle class="ph-dot" cx="260" cy="101" r="7"/><circle class="ph-dot" cx="100" cy="149" r="7"/>
+          </svg>
+          <p class="twin-ph__title">แผนผัง 3 มิติกำลังพัฒนา</p>
+          <p class="twin-ph__text">ระหว่างนี้ดูสถานะของแต่ละสถานีได้จากรายการด้านข้าง</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card panel" aria-labelledby="stations-title">
+      <header class="card__head">
+        <span class="icon-tile">{{ c.icon("station", 20) }}</span>
+        <div><h2 class="card__title" id="stations-title">สถานีทั้งหมด</h2><p class="card__subtitle" id="stations-sub">สถานะจากภาพล่าสุดของแต่ละสถานี</p></div>
+      </header>
+      <div class="scroll-area" tabindex="0" role="region" aria-label="รายการสถานี">
+        <ul class="row-list" id="station-list" role="list"></ul>
+        <p class="list-empty" id="station-empty" hidden>ยังไม่มีสถานีที่เปิดใช้งาน</p>
+      </div>
+      <ul class="status-legend" role="list" aria-label="ความหมายของสถานะ">
+        <li>{{ c.badge("ok", "ปกติ") }}<span>ภาพล่าสุดไม่พบอาการ</span></li>
+        <li>{{ c.badge("warn", "ใบเหลือง") }}<span>พบใบเหลืองในภาพล่าสุด</span></li>
+        <li>{{ c.badge("danger", "จุดน้ำตาล") }}<span>พบจุดสีน้ำตาลบนใบ</span></li>
+        <li>{{ c.badge("info", "รอตรวจทาน") }}<span>AI ไม่มั่นใจ รอผู้ดูแลตรวจ</span></li>
+        <li>{{ c.badge("neutral", "ยังไม่มีข้อมูล") }}<span>ยังไม่มีภาพจากสถานี</span></li>
+      </ul>
+    </section>
+  </div>
+
+  <div class="dash-row">
+    <section class="card panel" aria-labelledby="lots-title">
+      <header class="card__head">
+        <span class="icon-tile">{{ c.icon("batch", 20) }}</span>
+        <div><h2 class="card__title" id="lots-title">ล็อตใกล้เก็บเกี่ยว</h2><p class="card__subtitle" id="lots-sub">เหลือไม่เกิน 7 วัน หรือเกินกำหนดไม่เกิน 14 วัน</p></div>
+      </header>
+      <ul class="row-list" id="lot-list" role="list"></ul>
+      <p class="list-empty" id="lot-empty" hidden>ยังไม่มีล็อตที่ใกล้ถึงวันเก็บเกี่ยว</p>
+      <p class="note" id="lot-note">กำหนดเก็บเกี่ยวคำนวณจากรอบ 45 วันนับจากวันปลูก (ค่าสมมติ ไม่ใช่วันที่ผู้ปลูกกำหนด)</p>
+    </section>
+
+    <section class="card panel" aria-labelledby="activity-title">
+      <header class="card__head">
+        <span class="icon-tile">{{ c.icon("activity", 20) }}</span>
+        <div><h2 class="card__title" id="activity-title">การตรวจล่าสุด</h2><p class="card__subtitle">สถานีที่เพิ่งมีภาพเข้ามา</p></div>
+      </header>
+      <ul class="row-list" id="activity-list" role="list"></ul>
+      <p class="list-empty" id="activity-empty" hidden>ยังไม่มีการตรวจ</p>
+    </section>
+  </div>
+</div>
+
+{#- Row/badge/trend shapes for dashboard.js to clone: the icons come from the shared macros, the text is set with textContent. -#}
+{%- for kind in ["ok", "warn", "danger", "info", "neutral"] %}
+<template id="tpl-badge-{{ kind }}">{{ c.badge(kind, "") }}</template>
+{%- endfor %}
+{%- for dir, icon in [("up", "trend-up"), ("down", "trend-down"), ("flat", "trend-flat"), ("none", "info")] %}
+<template id="tpl-trend-{{ dir }}"><span class="trend">{{ c.icon(icon, 16) }}<span></span></span></template>
+{%- endfor %}
+<template id="tpl-station">
+  <li>
+    <div class="row__main"><p class="row__name"></p><p class="row__meta"></p></div>
+    <div class="row__side"><span data-slot="badge"></span><span class="row__time"></span></div>
+  </li>
+</template>
+<template id="tpl-lot">
+  <li>
+    <div class="row__main"><p class="row__name"></p><p class="row__meta"></p></div>
+    <div class="row__side"><span data-slot="badge"></span></div>
+    <div class="row__bar"><progress class="meter" max="1" value="0"></progress></div>
+  </li>
+</template>
+<template id="tpl-activity">
+  <li>
+    <div class="row__main"><p class="row__name"></p><p class="row__meta"></p></div>
+    <div class="row__side"><span data-slot="badge"></span></div>
+  </li>
+</template>
+{% endblock %}

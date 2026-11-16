@@ -14,6 +14,7 @@ from tests.test_web_crud import GET_PATHS, make_batch, make_crop, make_station
 STATIC = Path(__file__).resolve().parents[1] / "app" / "web" / "static"
 CSS = re.sub(r"/\*.*?\*/", "", (STATIC / "css" / "nexxa.css").read_text(encoding="utf-8"), flags=re.S)
 JS_FILES = ["theme-init.js", "theme-toggle.js", "app.js"]
+CHART_COLOURS = [f"--chart-{i}" for i in range(1, 7)]
 IMG_CAP = 200 * 1024
 THAI = re.compile(r"[฀-๿]")
 
@@ -59,7 +60,7 @@ def pages(engine, admin):
     station = make_station(engine, crop_id=crop)
     make_batch(engine, station, crop)
     anon = _client()
-    out = {"/login": anon.get("/login")}
+    out = {"/login": anon.get("/login"), "/": anon.get("/"), "/trends": anon.get("/trends")}
     c = _client()
     _login(c)
     _csrf(c.get("/admin").text)  # consume the login flash
@@ -270,6 +271,35 @@ def test_text_contrast_is_aa_in_both_modes(mode):
 def test_form_control_borders_reach_3_to_1(mode):
     failures = [(name, round(contrast(fg, bg), 2)) for name, fg, bg in _ui_pairs(mode) if contrast(fg, bg) < 3]
     assert not failures, failures
+
+
+def _chart_pairs(mode):
+    """Chart series colours (WCAG 1.4.11, 3:1) on the card they are drawn on: over the content sheet and, to be safe,
+    over the bare photo, each against the worst-case pixel."""
+    t = _theme(mode)
+    col = lambda name: _color(t[name], t)  # noqa: E731
+    ground = _over(col("--bg-scrim"), BLACK if mode == "light" else WHITE)
+    surfaces = {"card on sheet": _over(col("--glass-bg"), _over(col("--glass-bg-soft"), ground)),
+                "card on photo": _over(col("--glass-bg"), ground)}
+    return [(f"{name} on {sname}", col(name), surf) for name in CHART_COLOURS for sname, surf in surfaces.items()]
+
+
+@pytest.mark.parametrize("mode", ["light", "dark"])
+def test_chart_series_colours_reach_3_to_1_on_the_card(mode):
+    pairs = _chart_pairs(mode)
+    assert len(pairs) == 12
+    failures = [(name, round(contrast(fg, bg), 2)) for name, fg, bg in pairs if contrast(fg, bg) < 3]
+    assert not failures, failures
+
+
+@pytest.mark.parametrize("mode", ["light", "dark"])
+def test_chart_series_colours_are_distinguishable_from_each_other(mode):
+    t = _theme(mode)
+    cols = [_color(t[n], t) for n in CHART_COLOURS]
+    for i in range(len(cols)):
+        for j in range(i + 1, len(cols)):
+            dist = sum((cols[i][k] - cols[j][k]) ** 2 for k in range(3)) ** 0.5
+            assert dist >= 60, (CHART_COLOURS[i], CHART_COLOURS[j], round(dist))
 
 
 # --- images and scripts ----------------------------------------------------------

@@ -14,7 +14,7 @@ from app.db import engine, get_session, init_db
 from app.models import Analysis, Capture, Crop, Round, Station
 from app.quality import ImageDecodeError, check_quality
 from app.seed import seed
-from app.web import deps, routes_admin, routes_auth, routes_keys, routes_public_api
+from app.web import deps, routes_admin, routes_auth, routes_keys, routes_public, routes_public_api
 from app.web.templating import STATIC_DIR
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
@@ -92,6 +92,7 @@ app.include_router(routes_auth.router)
 app.include_router(routes_admin.router)
 app.include_router(routes_keys.router)
 app.include_router(routes_public_api.router)
+app.include_router(routes_public.router)
 app.add_exception_handler(deps.CsrfError, routes_auth.csrf_error_page)
 
 
