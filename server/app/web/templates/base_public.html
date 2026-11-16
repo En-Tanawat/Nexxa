@@ -1,0 +1,24 @@
+{%- import "_components.html" as c with context -%}
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0F172A">
+  <title>{% block title %}NEXXA{% endblock %} · NEXXA</title>
+  <link rel="icon" href="/static/img/mark.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="/static/css/nexxa.css">
+  {%- block head %}{% endblock %}
+  <script src="/static/js/app.js" defer></script>
+</head>
+<body class="{% block body_class %}{% endblock %}">
+  <a class="skip-link" href="#main">ข้ามไปยังเนื้อหาหลัก</a>
+  {% block body %}{% endblock %}
+  {% block toasts %}{{ c.toast_region(flash) }}{% endblock %}
+  {%- block scripts %}{% endblock %}
+</body>
+</html>

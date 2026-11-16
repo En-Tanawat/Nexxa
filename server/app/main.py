@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -12,6 +13,8 @@ from app.db import engine, get_session, init_db
 from app.models import Analysis, Capture, Crop, Round, Station
 from app.quality import ImageDecodeError, check_quality
 from app.seed import seed
+from app.web import routes_auth
+from app.web.templating import STATIC_DIR
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 MULTIPART_OVERHEAD = 64 * 1024  # form fields + boundaries on top of the image
@@ -37,6 +40,39 @@ async def reject_oversized(request: Request, call_next):
     if request.url.path == "/captures" and declared.isdigit() and int(declared) > MAX_UPLOAD_BYTES + MULTIPART_OVERHEAD:
         return JSONResponse({"detail": "image too large"}, status_code=413)
     return await call_next(request)
+
+
+# No 'unsafe-inline': all CSS/JS are files under /static. When the three.js importmap lands, generate a
+# per-request nonce in this middleware (request.state.csp_nonce), add 'nonce-<n>' to script-src and
+# put nonce="{{ request.state.csp_nonce }}" on that one <script type="importmap">.
+CSP = "; ".join([
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com",
+    "img-src 'self' data:",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+])
+_NO_PAGE_HEADERS = ("/captures", "/rounds", "/api/")  # device/JSON endpoints keep their responses untouched
+
+
+@app.middleware("http")
+async def page_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    if not request.url.path.startswith(_NO_PAGE_HEADERS):
+        response.headers.setdefault("Content-Security-Policy", CSP)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "same-origin")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+    return response
+
+
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+app.include_router(routes_auth.router)
 
 
 def require_device_key(x_device_key: str | None = Header(None)) -> None:

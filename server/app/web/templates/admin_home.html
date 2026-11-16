@@ -1,0 +1,55 @@
+{%- extends "base_admin.html" -%}
+{%- set active = "overview" -%}
+{% block title %}ภาพรวม{% endblock %}
+{% block content %}
+{{ c.page_header("ภาพรวมระบบ", eyebrow="สวัสดี " ~ admin.username, text="สรุปสิ่งที่ตั้งค่าไว้ในระบบ NEXXA เลือกการ์ดเพื่อไปจัดการแต่ละส่วน") }}
+
+{%- set cards = [
+  ("station", "/admin/stations", "สถานีตรวจ", stats.stations, "เปิดใช้งาน " ~ stats.stations_active ~ " สถานี"),
+  ("batch", "/admin/batches", "ล็อตผัก", stats.batches, "กำลังปลูก " ~ stats.batches_growing ~ " ล็อต"),
+  ("key", "/admin/keys", "คีย์ AI", stats.ai_keys, "เปิดใช้งาน " ~ stats.ai_keys_active ~ " คีย์"),
+  ("device", "/admin/devices", "อุปกรณ์", stats.devices, "device key ที่ใช้งานได้"),
+] %}
+<ul class="stat-grid" role="list">
+  {%- for icon, href, label, value, sub in cards %}
+  <li>
+    <a class="card card--link stat" href="{{ href }}">
+      <span class="stat__top">
+        <span class="icon-tile">{{ c.icon(icon, 20) }}</span>
+        <span class="stat__go">{{ c.icon("arrow-right", 18) }}<span class="sr-only">จัดการ{{ label }}</span></span>
+      </span>
+      <span class="stat__label">{{ label }}</span>
+      <span class="stat__value">{{ value }}</span>
+      <span class="stat__sub">{{ sub }}</span>
+    </a>
+  </li>
+  {%- endfor %}
+</ul>
+
+<div class="grid-2">
+  {% call c.card("สถานะระบบ", subtitle="การตั้งค่าความปลอดภัยฝั่งเซิร์ฟเวอร์", icon="activity") %}
+  <ul class="status-list" role="list">
+    <li><span>การเข้าสู่ระบบและ session</span>{{ c.badge("ok", "พร้อมใช้งาน") }}</li>
+    <li><span>การเข้ารหัสคีย์ AI</span>
+      {%- if secrets_enabled %}{{ c.badge("ok", "เปิดใช้งาน") }}{% else %}{{ c.badge("warn", "ปิด · ตั้ง NEXXA_SECRET_KEY") }}{% endif %}</li>
+    <li><span>คีย์ AI ที่เปิดใช้งาน</span>
+      {%- if stats.ai_keys_active %}{{ c.badge("ok", stats.ai_keys_active ~ " คีย์") }}{% else %}{{ c.badge("neutral", "ยังไม่มี") }}{% endif %}</li>
+    <li><span>อุปกรณ์ที่เชื่อมต่อได้</span>
+      {%- if stats.devices %}{{ c.badge("ok", stats.devices ~ " เครื่อง") }}{% else %}{{ c.badge("neutral", "ยังไม่มี") }}{% endif %}</li>
+  </ul>
+  {% endcall %}
+
+  {% call c.card("เริ่มต้นใช้งาน", subtitle="ลำดับที่แนะนำสำหรับตั้งค่าโรงเรือนใหม่", icon="chart") %}
+  <ol class="steps">
+    <li class="steps__item{% if stats.stations %} is-done{% endif %}"><a href="/admin/stations">เพิ่มสถานีและผูกแท็ก RFID</a>
+      {%- if stats.stations %}{{ c.badge("ok", "เสร็จแล้ว") }}{% endif %}</li>
+    <li class="steps__item{% if stats.batches %} is-done{% endif %}"><a href="/admin/batches">บันทึกล็อตผักที่กำลังปลูก</a>
+      {%- if stats.batches %}{{ c.badge("ok", "เสร็จแล้ว") }}{% endif %}</li>
+    <li class="steps__item{% if stats.ai_keys_active %} is-done{% endif %}"><a href="/admin/keys">เพิ่มคีย์ AI สำหรับวิเคราะห์ภาพ</a>
+      {%- if stats.ai_keys_active %}{{ c.badge("ok", "เสร็จแล้ว") }}{% endif %}</li>
+    <li class="steps__item{% if stats.devices %} is-done{% endif %}"><a href="/admin/devices">สร้าง device key ให้หุ่นยนต์</a>
+      {%- if stats.devices %}{{ c.badge("ok", "เสร็จแล้ว") }}{% endif %}</li>
+  </ol>
+  {% endcall %}
+</div>
+{% endblock %}

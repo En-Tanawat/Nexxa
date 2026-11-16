@@ -1,0 +1,49 @@
+{%- extends "base_public.html" -%}
+{% block title %}เข้าสู่ระบบ{% endblock %}
+{% block body_class %}page-auth{% endblock %}
+{% block toasts %}{{ c.toast_region(flash or ({"text": "ออกจากระบบเรียบร้อยแล้ว", "kind": "info"} if logged_out else none)) }}{% endblock %}
+{% block body %}
+<main class="auth" id="main" tabindex="-1">
+  <div class="auth__inner">
+    <div class="auth__brand">
+      {{ c.logo(44) }}
+      <p class="auth__tagline">ระบบตรวจสุขภาพผักอัตโนมัติ</p>
+    </div>
+
+    <section class="card card--auth" aria-labelledby="login-title">
+      <header class="auth__head">
+        <span class="icon-tile icon-tile--lg">{{ c.icon("shield", 22) }}</span>
+        <div>
+          <h1 class="auth__title" id="login-title">เข้าสู่ระบบผู้ดูแล</h1>
+          <p class="auth__lead">จัดการสถานี ล็อตผัก คีย์ AI และอุปกรณ์ของโรงเรือน</p>
+        </div>
+      </header>
+
+      {%- if not session_enabled %}
+      {% call c.alert("warn", "ยังไม่ได้ตั้ง NEXXA_SESSION_SECRET หรือ NEXXA_SECRET_KEY บนเซิร์ฟเวอร์ จึงยังเข้าสู่ระบบไม่ได้", title="ระบบยังตั้งค่าไม่ครบ") %}
+        <p>ตั้งค่าตัวแปรหนึ่งในนี้ด้วยค่าสุ่มยาว ๆ แล้วรีสตาร์ตเซิร์ฟเวอร์</p>
+      {% endcall %}
+      {%- elif not has_admin %}
+      {% call c.alert("info", "ยังไม่มีผู้ดูแลในระบบ สร้างบัญชีแรกด้วยคำสั่งนี้ในโฟลเดอร์ server", title="เริ่มต้นใช้งาน") %}
+        <pre class="code"><code>python -m app.create_admin --username ชื่อผู้ใช้</code></pre>
+      {% endcall %}
+      {%- endif %}
+
+      <form class="form" method="post" action="/login" data-busy-form>
+        {{ c.csrf_field() }}
+        <input type="hidden" name="next" value="{{ next }}">
+        <fieldset class="form__fields"{% if not session_enabled %} disabled{% endif %}>
+          <legend class="sr-only">ข้อมูลเข้าสู่ระบบ</legend>
+          {%- if error %}{{ c.alert("danger", error, role="alert") }}{% endif %}
+          {{ c.field("username", "ชื่อผู้ใช้", value=username, required=true, autocomplete="username",
+                     attrs={"autocapitalize": "none", "spellcheck": "false", "autofocus": true}) }}
+          {{ c.password_field("password", "รหัสผ่าน") }}
+          {{ c.button("เข้าสู่ระบบ", icon="arrow-right", block=true) }}
+        </fieldset>
+      </form>
+    </section>
+
+    <p class="auth__foot">{{ c.icon("lock", 14) }}<span>เฉพาะผู้ดูแลระบบ · การเข้าสู่ระบบผิดซ้ำหลายครั้งจะถูกพักชั่วคราว</span></p>
+  </div>
+</main>
+{% endblock %}
