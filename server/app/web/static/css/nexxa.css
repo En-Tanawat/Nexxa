@@ -303,6 +303,16 @@
 *, *::before, *::after { box-sizing: border-box; }
 * { margin: 0; }
 html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; scroll-behavior: smooth; }
+/* Thin scrollbars that follow the theme (the colour mixes the theme's muted text colour, so light and dark both work). */
+:root { scrollbar-color: color-mix(in srgb, var(--color-muted-foreground) 60%, transparent) transparent; }
+* { scrollbar-width: thin; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track, *::-webkit-scrollbar-corner { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-muted-foreground) 60%, transparent);
+  background-clip: content-box; border: 2px solid transparent; border-radius: var(--radius-full);
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--color-muted-foreground); background-clip: content-box; }
 body {
   min-height: 100vh;
   min-height: 100dvh;
@@ -525,6 +535,7 @@ html:not([data-theme]) .theme-toggle { display: none; }
     backdrop-filter: blur(var(--glass-blur)) saturate(120%);
   }
 }
+.card__body > * + * { margin-top: var(--space-md); }  /* stacked blocks in a card never touch; later, more specific margins still win */
 .card__head { display: flex; align-items: center; gap: var(--space-md); margin-bottom: var(--space-lg); }
 .card__title { font-size: var(--text-lg); }
 .card__subtitle { font-size: var(--text-sm); color: var(--color-muted-foreground); }
@@ -916,10 +927,11 @@ html:not([data-theme]) .theme-toggle { display: none; }
   box-shadow: var(--glass-highlight), var(--glass-edge), var(--shadow-md);
 }
 .topbar__brand { display: none; }
+.topbar { min-width: 0; }
 .topbar__context { min-width: 0; }
 .topbar__context .eyebrow { color: var(--color-muted-foreground); letter-spacing: 0.06em; }
 .topbar__title { font-weight: 700; font-size: var(--text-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.topbar__user { margin-left: auto; display: flex; align-items: center; gap: var(--space-sm); }
+.topbar__user { margin-left: auto; display: flex; align-items: center; gap: var(--space-sm); min-width: 0; }
 .user-chip { display: inline-flex; align-items: center; gap: 0.6rem; min-width: 0; margin-inline: var(--space-xs); }
 .user-chip__avatar {
   display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0;
@@ -939,6 +951,7 @@ html:not([data-theme]) .theme-toggle { display: none; }
   box-shadow: var(--glass-highlight), var(--glass-edge), var(--shadow-lg);
 }
 .content > * { width: 100%; max-width: var(--content-max); }
+.page-stack { display: grid; gap: inherit; }  /* a page wrapper that must keep the .content row gap between its own blocks */
 .page-header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--space-md); }
 .page-title { font-size: var(--text-2xl); font-weight: 800; letter-spacing: -0.02em; margin-top: 0.15rem; }
 .page-lead { margin-top: var(--space-xs); max-width: 62ch; color: var(--color-muted-foreground); }
@@ -1044,6 +1057,7 @@ html:not([data-theme]) .theme-toggle { display: none; }
   :root { --shell-gap: 8px; }
   .topbar { gap: var(--space-xs); }
   .topbar__user { gap: var(--space-xs); }
+  .user-chip .badge { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); padding: 0; border: 0; }  /* role stays in the chip's title */
   .user-chip { margin-inline: 2px; }
   /* name stays available to screen readers; the avatar initial + title show it visually */
   .user-chip__name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

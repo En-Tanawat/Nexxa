@@ -2,7 +2,7 @@
 {%- set active = "robot" -%}
 {% block title %}สถานะหุ่นยนต์ ESP32{% endblock %}
 {% block content %}
-<div data-robot-monitor>
+<div class="page-stack" data-robot-monitor>
   {{ c.page_header(
       "สถานะหุ่นยนต์ ESP32",
       eyebrow="ระบบฮาร์ดแวร์และการนำทาง",
@@ -72,31 +72,24 @@
   </div>
 
   <div class="grid-2">
-    <!-- Live Stream Panel -->
-    {% call c.card("ภาพสดจากกล้อง ESP32-CAM", subtitle="สตรีมวิดีโอแบบ MJPEG จากหุ่นยนต์ขณะเคลื่อนที่หรือตรวจสอบ", icon="camera") %}
+    <!-- Relayed camera frame -->
+    {% call c.card("ภาพล่าสุดจากกล้อง ESP32-CAM", subtitle="อัปเดตทุก ~5 วินาทีขณะหุ่นยนต์ทำงาน", icon="camera") %}
     <div class="robot-cam-box">
       <div class="robot-cam-frame">
-        {%- if status.stream_url %}
-        <img class="robot-cam-img" src="{{ status.stream_url }}" alt="ESP32-CAM Live Stream">
-        {%- else %}
-        <div class="robot-cam-fallback">
+        <img id="robot-cam-stream" class="robot-cam-img" alt="ภาพล่าสุดจากกล้อง ESP32-CAM ของหุ่นยนต์" hidden>
+        <div class="robot-cam-fallback" id="robot-cam-fallback">
           <div class="robot-cam-fallback__icon">{{ c.icon("camera", 32) }}</div>
-          <p class="robot-cam-fallback__title">ยังไม่ได้กำหนด URL สตรีมกล้อง</p>
-          <p class="robot-cam-fallback__text">กำหนด URL สตรีมของ ESP32 ได้ที่หน้าตั้งค่าระบบ</p>
-          {%- if not can or can("setting", "read") %}
-          <div class="actions">
-            <a href="/admin/settings" class="btn btn--secondary btn--sm">{{ c.icon("settings", 16) }} <span>ไปที่หน้าตั้งค่า</span></a>
-          </div>
-          {%- endif %}
+          <p class="robot-cam-fallback__title" id="robot-fallback-title">ยังไม่มีภาพจากกล้อง</p>
+          <p class="robot-cam-fallback__text" id="robot-fallback-text">หุ่นยนต์จะส่งภาพเมื่อเริ่มตรวจ</p>
         </div>
-        {%- endif %}
-        
+
         <div class="robot-cam-overlay">
           <div class="robot-cam-chips">
             <span class="robot-chip">
               <span class="robot-pulse-dot robot-pulse-dot--{% if status.online %}ok{% else %}neutral{% endif %}"></span>
               <span data-robot-hud-status>{% if status.online %}LIVE{% else %}OFFLINE{% endif %}</span>
             </span>
+            <span class="robot-chip" id="robot-cam-age" hidden></span>
             <span class="robot-chip" data-robot-hud-angle>
               {%- if status.camera_angle_label %}มุม{{ status.camera_angle_label }}{% else %}-{% endif %}
             </span>
