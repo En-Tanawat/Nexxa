@@ -1,6 +1,9 @@
+import logging
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.bootstrap import bootstrap_first_admin
 from app.models import Crop, Station
 
 TIPBURN_HINT = (
@@ -36,3 +39,9 @@ def seed(session: Session) -> None:
         for s in STATIONS:
             session.add(Station(**s, crop_id=None if s["kind"] == "home" else crop.id))
     session.commit()
+
+    try:  # startup must never fail because of this
+        bootstrap_first_admin(session)
+    except Exception as e:
+        session.rollback()
+        logging.getLogger(__name__).warning("admin bootstrap failed (%s)", type(e).__name__)
