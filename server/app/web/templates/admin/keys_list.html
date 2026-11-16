@@ -1,0 +1,46 @@
+{%- extends "base_admin.html" -%}
+{%- set active = "key" -%}
+{% block title %}คีย์ AI{% endblock %}
+{% block content %}
+{% call c.page_header("คีย์ AI", eyebrow="การวิเคราะห์ภาพ", text="คีย์ของผู้ให้บริการ AI ถูกเข้ารหัสก่อนเก็บ หน้าเว็บแสดงเพียง 4 ตัวท้ายเพื่อให้จำได้ ไม่มีใครดูคีย์เต็มย้อนหลังได้") %}
+  {%- if secrets_on %}{{ c.button("เพิ่มคีย์", href="/admin/keys/new", icon="plus") }}
+  {%- else %}{{ c.button("เพิ่มคีย์", type="button", icon="plus", attrs={"disabled": true, "aria-describedby": "secrets-off"}) }}{% endif %}
+{% endcall %}
+
+{%- if not secrets_on %}
+<div id="secrets-off">{% call c.alert("warn", "ระบบเข้ารหัสคีย์ปิดอยู่ เพราะเซิร์ฟเวอร์ยังไม่ได้ตั้ง NEXXA_SECRET_KEY จึงเพิ่มหรือเปลี่ยนคีย์ผ่านหน้าเว็บไม่ได้ (เพื่อไม่ให้คีย์ถูกเก็บแบบไม่เข้ารหัส)", title="เพิ่มหรือเปลี่ยนคีย์ไม่ได้ในตอนนี้", role="alert") %}
+  <p>ให้ผู้ดูแลเซิร์ฟเวอร์สร้างกุญแจด้วยคำสั่งด้านล่าง ตั้งเป็นตัวแปรสภาพแวดล้อม NEXXA_SECRET_KEY แล้วเริ่มเซิร์ฟเวอร์ใหม่ ระหว่างนี้ระบบยังใช้คีย์จากตัวแปรสภาพแวดล้อมได้ตามเดิม</p>
+  <pre class="code">python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"</pre>
+{% endcall %}</div>
+{%- endif %}
+
+{% call c.data_table(["ผู้ให้บริการ", "ชื่อเรียก", "คีย์", "สถานะ", "เพิ่มเมื่อ", "จัดการ"], keys | length, "รายการคีย์ AI",
+    empty_title="ยังไม่มีคีย์ AI",
+    empty_text=("เพิ่มคีย์ของผู้ให้บริการที่ต้องการใช้ หรือใช้คีย์จากตัวแปรสภาพแวดล้อมของเซิร์ฟเวอร์ต่อไป" if secrets_on else "ตอนนี้ระบบใช้คีย์จากตัวแปรสภาพแวดล้อมของเซิร์ฟเวอร์เท่านั้น"),
+    empty_href=("/admin/keys/new" if secrets_on else none), empty_label="เพิ่มคีย์") %}
+  {%- for k in keys %}
+  <tr>
+    <td data-label="ผู้ให้บริการ"><strong>{{ provider_th.get(k.provider, k.provider) }}</strong></td>
+    <td class="cell-wrap" data-label="ชื่อเรียก">{{ k.label }}</td>
+    <td data-label="คีย์"><code translate="no">{{ mask(k.last4) }}</code></td>
+    <td data-label="สถานะ">
+      {%- if not k.active %}{{ c.badge("neutral", "ปิดใช้งาน") }}
+      {%- elif not secrets_on %}{{ c.badge("warn", "ใช้ไม่ได้ (การเข้ารหัสปิด)") }}
+      {%- elif k.id in in_use %}{{ c.badge("ok", "กำลังใช้") }}
+      {%- else %}{{ c.badge("info", "สำรอง") }}{% endif %}</td>
+    <td class="nowrap" data-label="เพิ่มเมื่อ">{{ added(k) }}</td>
+    <td data-label="จัดการ"><div class="actions">
+      {%- set toggle = "ปิดใช้งาน" if k.active else "เปิดใช้งาน" %}
+      <form class="inline-form" method="post" action="/admin/keys/{{ k.id }}/toggle">{{ c.csrf_field() }}
+        {{- c.button(toggle, variant="secondary", size="sm", icon=("neutral" if k.active else "ok"), attrs={"aria-label": toggle ~ " " ~ k.label}) }}</form>
+      {%- if secrets_on %}
+      {{ c.button("เปลี่ยนคีย์", variant="secondary", size="sm", icon="edit", href="/admin/keys/" ~ k.id ~ "/replace", attrs={"aria-label": "เปลี่ยนคีย์ " ~ k.label}) }}
+      {%- endif %}
+      {{ c.button("ลบ", variant="danger", size="sm", icon="trash", href="/admin/keys/" ~ k.id ~ "/delete", attrs={"aria-label": "ลบคีย์ " ~ k.label}) }}
+    </div></td>
+  </tr>
+  {%- endfor %}
+{% endcall %}
+
+{{ c.alert("info", "ถ้ามีหลายคีย์ของผู้ให้บริการเดียวกัน ระบบใช้คีย์ที่เปิดใช้งานและเพิ่มล่าสุด (สถานะ กำลังใช้) ถ้าไม่มีคีย์ที่เปิดใช้งาน ระบบจะใช้คีย์จากตัวแปรสภาพแวดล้อมของเซิร์ฟเวอร์ เลือกผู้ให้บริการและรุ่นได้ที่หน้า ตั้งค่า AI", title="ระบบเลือกคีย์อย่างไร") }}
+{% endblock %}

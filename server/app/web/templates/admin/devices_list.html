@@ -1,0 +1,43 @@
+{%- extends "base_admin.html" -%}
+{%- set active = "device" -%}
+{% block title %}อุปกรณ์{% endblock %}
+{% block content %}
+{{ c.page_header("อุปกรณ์และ device key", eyebrow="การเชื่อมต่อ", text="หุ่นยนต์ (ESP32) ต้องส่ง device key ในส่วนหัว X-Device-Key ทุกครั้งที่ส่งภาพ ระบบเก็บเพียงค่าแฮช จึงแสดงคีย์เต็มได้ครั้งเดียวตอนสร้าง") }}
+
+{% call c.data_table(["อุปกรณ์", "คีย์", "สถานะ", "สร้างเมื่อ", "จัดการ"], devices | length, "รายการ device key",
+    empty_title="ยังไม่มี device key", empty_text="สร้างคีย์ด้านล่างแล้วนำไปใส่ในเฟิร์มแวร์ของหุ่นยนต์") %}
+  {%- for d in devices %}
+  <tr>
+    <td class="cell-wrap" data-label="อุปกรณ์"><strong>{{ d.label }}</strong></td>
+    <td data-label="คีย์"><code translate="no">{{ mask(d.last4) }}</code></td>
+    <td data-label="สถานะ">
+      {%- if d.active and not d.revoked_at %}{{ c.badge("ok", "ใช้งานได้") }}
+      {%- else %}{{ c.badge("neutral", "ยกเลิกแล้ว " ~ when(d.revoked_at)[:10]) }}{% endif %}</td>
+    <td class="nowrap" data-label="สร้างเมื่อ">{{ when(d.created_at)[:16] }}</td>
+    <td data-label="จัดการ"><div class="actions">
+      {%- if d.active and not d.revoked_at %}
+      <form class="inline-form" method="post" action="/admin/devices/{{ d.id }}/revoke"
+            data-confirm="ยกเลิก device key ของ {{ d.label }}? อุปกรณ์ที่ใช้คีย์นี้จะส่งภาพไม่ได้ทันที และกู้คืนไม่ได้">{{ c.csrf_field() }}
+        {{- c.button("ยกเลิกคีย์", variant="danger", size="sm", icon="close", attrs={"aria-label": "ยกเลิกคีย์ของ " ~ d.label}) }}</form>
+      {%- else %}<span class="text-muted">-</span>{% endif %}
+    </div></td>
+  </tr>
+  {%- endfor %}
+{% endcall %}
+
+{%- if env_key %}
+{{ c.alert("info", "เซิร์ฟเวอร์ยังตั้ง NEXXA_DEVICE_KEY ไว้ คีย์นั้นใช้ส่งภาพได้เสมอ (ยกเลิกจากหน้านี้ไม่ได้) เมื่ออุปกรณ์ทุกเครื่องเปลี่ยนมาใช้คีย์จากหน้านี้แล้ว ให้ลบตัวแปรนั้นออกจากเซิร์ฟเวอร์", title="มีคีย์สำรองจากเซิร์ฟเวอร์") }}
+{%- endif %}
+
+{%- if errors %}{{ c.alert("danger", "มี " ~ errors | length ~ " ช่องที่ต้องแก้ไข ดูข้อความสีแดงใต้ช่อง", title="สร้างคีย์ไม่สำเร็จ", role="alert") }}{% endif %}
+<form class="form" method="post" action="/admin/devices" data-busy-form>
+  {{ c.csrf_field() }}
+  {% call c.card("สร้าง device key ใหม่", subtitle="คีย์จะแสดงครั้งเดียวในหน้าถัดไป เตรียมคัดลอกไปใส่ในหุ่นยนต์", icon="device") %}
+  <div class="form-grid">
+    {{ c.field("label", "ชื่ออุปกรณ์", value=values["label"], error=errors.get("label"), required=true,
+               help="เช่น หุ่นยนต์โรงเรือน 1", attrs={"maxlength": 60, "autocomplete": "off"}) }}
+  </div>
+  <div class="form-actions">{{ c.button("สร้างคีย์", icon="plus") }}</div>
+  {% endcall %}
+</form>
+{% endblock %}

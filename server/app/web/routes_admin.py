@@ -35,6 +35,8 @@ ACTION_TH = {
     "crop.create": "สร้างชนิดผัก", "crop.update": "แก้ไขชนิดผัก", "crop.delete": "ลบชนิดผัก",
     "batch.create": "สร้างล็อตผัก", "batch.update": "แก้ไขล็อตผัก", "batch.delete": "ลบล็อตผัก",
     "user.create": "สร้างผู้ดูแล", "user.password": "เปลี่ยนรหัสผ่าน", "user.delete": "ลบผู้ดูแล",
+    "key.create": "สร้างคีย์ AI", "key.replace": "เปลี่ยนคีย์ AI", "key.toggle": "เปิด/ปิดคีย์ AI", "key.delete": "ลบคีย์ AI",
+    "device.create": "สร้าง device key", "device.revoke": "ยกเลิก device key", "ai.update": "แก้ไขการตั้งค่า AI",
 }
 
 

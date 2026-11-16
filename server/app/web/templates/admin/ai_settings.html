@@ -1,0 +1,56 @@
+{%- extends "base_admin.html" -%}
+{%- set active = "ai" -%}
+{% block title %}ตั้งค่า AI{% endblock %}
+{% block content %}
+{{ c.page_header("ตั้งค่า AI", eyebrow="การวิเคราะห์ภาพ", text="เลือกผู้ให้บริการและรุ่นที่ใช้วิเคราะห์ภาพใบผัก ช่องที่เว้นว่างจะใช้ค่าจากตัวแปรสภาพแวดล้อมของเซิร์ฟเวอร์ตามเดิม") }}
+
+{%- if not secrets_on %}
+{{ c.alert("warn", "เซิร์ฟเวอร์ยังไม่ได้ตั้ง NEXXA_SECRET_KEY ระบบจึงใช้ได้เฉพาะคีย์จากตัวแปรสภาพแวดล้อม คีย์ที่เพิ่มผ่านหน้าเว็บจะยังไม่ถูกใช้ การตั้งค่าในหน้านี้ยังบันทึกได้ตามปกติ", title="ระบบเข้ารหัสคีย์ปิดอยู่") }}
+{%- endif %}
+
+{% call c.card("ความพร้อมของผู้ให้บริการ", subtitle="พร้อมใช้งาน = มีคีย์ และมีชื่อรุ่น (ชื่อรุ่นและ base URL ใช้กับผู้ให้บริการที่เลือกอยู่)", icon="activity") %}
+<ul class="provider-grid" role="list">
+  {%- for p in cards %}
+  {%- set ready = not p.missing %}
+  <li class="provider-tile{% if p.selected %} is-selected{% endif %}" data-provider="{{ p.name }}" data-ready="{{ 'yes' if ready else 'no' }}">
+    <div class="provider-tile__head">
+      <p class="provider-tile__name">{{ p.label }}</p>
+      {%- if p.selected %}{{ c.badge("info", "เลือกอยู่") }}{% endif %}
+    </div>
+    {%- if ready %}{{ c.badge("ok", "พร้อมใช้งาน") }}{% else %}{{ c.badge("warn", "ยังขาด: " ~ p.missing | join(", ")) }}{% endif %}
+    <ul class="provider-tile__facts" role="list">
+      <li>คีย์: {% if p.source == "web" %}จากหน้าคีย์ AI{% elif p.source == "env" %}จาก {{ p.key_env }}{% else %}ไม่มี (หน้าคีย์ AI หรือ {{ p.key_env }}){% endif %}</li>
+      <li>ชื่อรุ่น: {% if model_now %}<code translate="no">{{ model_now }}</code>{% elif p.name == "anthropic" %}ค่าเริ่มต้นของระบบ{% else %}ยังไม่ได้ตั้ง{% endif %}</li>
+    </ul>
+  </li>
+  {%- endfor %}
+</ul>
+<ul class="status-list provider-status" role="list">
+  <li><span>การเข้ารหัสคีย์ (NEXXA_SECRET_KEY)</span>{% if secrets_on %}{{ c.badge("ok", "เปิดใช้งาน") }}{% else %}{{ c.badge("warn", "ปิดอยู่") }}{% endif %}</li>
+  <li><span>ชื่อรุ่นที่ใช้อยู่</span>{% if model_now %}<code translate="no">{{ model_now }}</code>{% else %}{{ c.badge("neutral", "ยังไม่ได้ตั้ง") }}{% endif %}</li>
+</ul>
+{% endcall %}
+
+{%- if errors %}{{ c.alert("danger", "มี " ~ errors | length ~ " ช่องที่ต้องแก้ไข ดูข้อความสีแดงใต้แต่ละช่อง ยังไม่มีการเปลี่ยนแปลงใดถูกบันทึก", title="บันทึกไม่สำเร็จ", role="alert") }}{% endif %}
+<form class="form" method="post" action="/admin/ai" data-busy-form>
+  {{ c.csrf_field() }}
+  {% call c.card("ผู้ให้บริการและรุ่น", subtitle="มีผลกับภาพถัดไปที่หุ่นยนต์ส่งเข้ามาทันที", icon="ai") %}
+  <div class="form-grid">
+    {{ c.select("provider", "ผู้ให้บริการ", providers, value=values["provider"], error=errors.get("provider"),
+                placeholder="ตามเซิร์ฟเวอร์ (ตอนนี้: " ~ env.provider ~ ")", help="เว้นว่าง = ใช้ NEXXA_VISION_PROVIDER ของเซิร์ฟเวอร์") }}
+    {{ c.field("model", "ชื่อรุ่น", value=values["model"], error=errors.get("model"),
+               help=("เว้นว่าง = ใช้ NEXXA_VISION_MODEL (ตอนนี้: " ~ (env.model or "ไม่ได้ตั้ง") ~ ") ผู้ให้บริการอื่นนอกจาก Anthropic ต้องมีชื่อรุ่น"),
+               attrs={"maxlength": 100, "autocomplete": "off", "spellcheck": "false", "placeholder": "เช่น gpt-4.1-mini"}) }}
+    <div class="form-grid__wide">
+      {{ c.field("base_url", "Base URL (ไม่บังคับ)", type="url", value=values["base_url"], error=errors.get("base_url"),
+                 help=("เว้นว่าง = ใช้ค่าเริ่มต้นของผู้ให้บริการ" ~ (" (เซิร์ฟเวอร์ตั้ง NEXXA_VISION_BASE_URL ไว้)" if env.base_url else "") ~ " ใช้กับผู้ให้บริการแบบ OpenAI-compatible เท่านั้น ต้องเป็น https:// และเป็นโดเมนสาธารณะ"),
+                 attrs={"maxlength": 300, "autocomplete": "off", "spellcheck": "false", "placeholder": "https://api.example.com/v1"}) }}
+    </div>
+  </div>
+  <div class="form-actions">
+    {{ c.button("บันทึกการตั้งค่า", icon="ok") }}
+    {{ c.button("จัดการคีย์ AI", variant="ghost", href="/admin/keys", icon="key") }}
+  </div>
+  {% endcall %}
+</form>
+{% endblock %}

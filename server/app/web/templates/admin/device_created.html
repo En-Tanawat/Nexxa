@@ -1,0 +1,14 @@
+{%- extends "base_admin.html" -%}
+{%- set active = "device" -%}
+{% block title %}สร้าง device key แล้ว{% endblock %}
+{% block content %}
+{{ c.page_header("สร้าง device key แล้ว", eyebrow="อุปกรณ์", text="คัดลอกคีย์นี้ไปใส่ในเฟิร์มแวร์ของ " ~ device.label ~ " ตอนนี้") }}
+{{ c.alert("warn", "คีย์นี้แสดงครั้งเดียวเท่านั้น ระบบเก็บไว้เพียงค่าแฮช เมื่อออกจากหน้านี้จะดูคีย์เต็มอีกไม่ได้ ถ้าทำหายให้สร้างคีย์ใหม่แล้วยกเลิกคีย์เดิม อย่ารีเฟรชหน้านี้ (จะเป็นการสร้างคีย์ใหม่อีกอัน)", title="แสดงครั้งเดียว", role="alert") }}
+{% call c.card("device key ของ " ~ device.label, subtitle="ส่งในส่วนหัว X-Device-Key ทุกครั้งที่หุ่นยนต์ส่งภาพ", icon="device") %}
+  <p class="code code--secret" translate="no" data-device-key>{{ device_key }}</p>
+  <p class="field__help">ตัวอย่างการใช้งาน: ส่วนหัว <code translate="no">X-Device-Key</code> ของคำขอ <code translate="no">POST /captures</code> และ <code translate="no">POST /rounds</code></p>
+  <div class="form-actions">
+    {{ c.button("คัดลอกแล้ว กลับไปหน้าอุปกรณ์", href="/admin/devices", icon="ok") }}
+  </div>
+{% endcall %}
+{% endblock %}

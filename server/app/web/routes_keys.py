@@ -1,0 +1,322 @@
+"""Admin pages for AI provider keys, device keys (for the robot) and the active AI settings.
+
+Secrets never leave this module in clear except once: a new device key is shown on the response to its POST.
+Provider keys are Fernet-encrypted (secretbox) and shown only as a mask + last 4; when secretbox is off, nothing that
+would store a key is accepted. Device keys are stored as SHA-256 hashes. Audit rows never carry a secret.
+"""
+import ipaddress
+import os
+import re
+from datetime import datetime, timezone
+from urllib.parse import urlsplit
+
+from fastapi import APIRouter, Depends, Request
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app import runtime_config
+from app.db import get_session
+from app.models import AdminUser, AppSetting, DeviceKey, ProviderKey
+from app.providers import PROVIDERS
+from app.web import audit, deps, secretbox, security
+from app.web.routes_admin import CSRF, Id, _delete_page, _done, _fields, _missing, _text, _thai_time, _update_detail
+from app.web.templating import render
+
+router = APIRouter(prefix="/admin", dependencies=[Depends(deps.require_admin)])
+
+PROVIDER_TH = {"anthropic": "Anthropic (Claude)", "openai": "OpenAI", "gemini": "Google Gemini",
+               "qwen": "Qwen (Alibaba Cloud)", "deepseek": "DeepSeek"}
+KEY_MIN, KEY_MAX, LABEL_MAX, MODEL_MAX, URL_MAX = 8, 512, 60, 100, 300
+KEY_RE = re.compile(r"[\x21-\x7e]+")  # printable ASCII, no spaces: every provider's keys look like this
+MODEL_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]*")
+HOST_LABEL_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
+BLOCKED_HOST_SUFFIXES = (".localhost", ".local", ".internal")
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+# --- validation ---------------------------------------------------------------------
+
+def _key_error(key: str) -> str | None:
+    if not key:
+        return "กรุณาวางคีย์"
+    if not KEY_MIN <= len(key) <= KEY_MAX:
+        return f"คีย์ต้องยาว {KEY_MIN}-{KEY_MAX} ตัวอักษร"
+    if not KEY_RE.fullmatch(key):
+        return "คีย์ใช้ได้เฉพาะตัวอักษรภาษาอังกฤษ ตัวเลข และเครื่องหมาย ห้ามมีช่องว่างหรือภาษาไทย"
+    return None
+
+
+def base_url_error(value: str) -> str | None:
+    """Server-side SSRF guard for the base URL an admin may set; '' means the provider's default.
+
+    shortcut: a hostname that RESOLVES to a private/loopback address is not blocked (no DNS lookup here, and DNS can
+    change after the check); the OWASP task should pin/check the resolved address at connect time.
+    """
+    if not value:
+        return None
+    if len(value) > URL_MAX:
+        return f"URL ยาวเกินไป (ไม่เกิน {URL_MAX} ตัวอักษร)"
+    if not value.isascii() or not value.isprintable() or " " in value or "\\" in value:
+        return "URL มีอักขระที่ใช้ไม่ได้ (ช่องว่าง เครื่องหมาย \\ หรือตัวอักษรที่ไม่ใช่ภาษาอังกฤษ)"
+    if "?" in value or "#" in value:
+        return "URL ต้องไม่มีส่วน ? หรือ # (ห้ามใส่คีย์หรือพารามิเตอร์ใน URL)"
+    try:
+        parts = urlsplit(value)
+        host = parts.hostname or ""
+        parts.port  # noqa: B018 - raises ValueError for a port that is not a number in 0-65535
+    except ValueError:
+        return "รูปแบบ URL ไม่ถูกต้อง"
+    if "@" in parts.netloc:
+        return "ห้ามใส่ชื่อผู้ใช้หรือรหัสผ่านใน URL"
+    if not host:
+        return "รูปแบบ URL ไม่ถูกต้อง ตัวอย่าง https://api.example.com/v1"
+    if os.getenv("NEXXA_ALLOW_INSECURE_BASE_URL") == "1" and host in ("localhost", "127.0.0.1") \
+            and parts.scheme in ("http", "https"):
+        return None  # local testing only, opt-in from the server environment
+    if parts.scheme != "https":
+        return "URL ต้องขึ้นต้นด้วย https://"
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        ip = None
+    if ip is not None:
+        if ip.version == 6 and ip.ipv4_mapped:
+            ip = ip.ipv4_mapped
+        if not ip.is_global or ip.is_multicast:
+            return "ห้ามใช้ที่อยู่ IP ภายในหรือที่สงวนไว้ (เช่น 10.x, 192.168.x, 127.x, 169.254.x)"
+        return None
+    labels = host.split(".")
+    # every label a DNS label and a TLD that starts with a letter: rejects "127.1", "0x7f000001", "intranet"
+    if len(labels) < 2 or not all(HOST_LABEL_RE.fullmatch(x) for x in labels) or not labels[-1][0].isalpha():
+        return "ชื่อโดเมนไม่ถูกต้อง ต้องเป็นโดเมนสาธารณะ เช่น api.example.com"
+    if host == "localhost" or host.endswith(BLOCKED_HOST_SUFFIXES):
+        return "ห้ามใช้ชื่อเครื่องภายใน (localhost, .local, .internal)"
+    return None
+
+
+# --- provider keys ----------------------------------------------------------------------
+
+def _provider_options():
+    return [(name, PROVIDER_TH.get(name, name)) for name in PROVIDERS]
+
+
+def _key_form(request: Request, values: dict, errors: dict, key: ProviderKey | None = None, status_code=200):
+    return render(request, "admin/key_form.html", status_code=status_code, values=values, errors=errors, key=key,
+                  providers=_provider_options(), provider_th=PROVIDER_TH, secrets_on=secretbox.secrets_enabled(),
+                  mask=secretbox.mask, added=_thai_time(key.created_at)[:10] if key else "")
+
+
+@router.get("/keys")
+def keys_list(request: Request, session: Session = Depends(get_session)):
+    keys = session.scalars(select(ProviderKey).order_by(ProviderKey.provider, ProviderKey.created_at.desc(),
+                                                        ProviderKey.id.desc())).all()
+    in_use: dict[str, int] = {}
+    for k in keys:  # same order as runtime_config: the newest active key of each provider is the one used
+        if k.active:
+            in_use.setdefault(k.provider, k.id)
+    return render(request, "admin/keys_list.html", keys=keys, in_use=set(in_use.values()), provider_th=PROVIDER_TH,
+                  secrets_on=secretbox.secrets_enabled(), mask=secretbox.mask, added=lambda k: _thai_time(k.created_at)[:10])
+
+
+@router.get("/keys/new")
+def key_new(request: Request):
+    return _key_form(request, {"provider": "", "label": ""}, {})
+
+
+@router.post("/keys", dependencies=CSRF)
+def key_create(request: Request, f: dict = _fields("provider", "label", "key"),
+               admin: AdminUser = Depends(deps.require_admin), session: Session = Depends(get_session)):
+    values = {"provider": f["provider"], "label": f["label"]}  # the key itself is never echoed back
+    if not secretbox.secrets_enabled():
+        return _key_form(request, values, {}, status_code=409)
+    e: dict[str, str] = {}
+    provider = f["provider"].strip()
+    if provider not in PROVIDERS:
+        e["provider"] = "กรุณาเลือกผู้ให้บริการจากรายการ"
+    label = _text(e, "label", f["label"], "ชื่อเรียก", LABEL_MAX)
+    key = f["key"].strip()
+    if err := _key_error(key):
+        e["key"] = err
+    elif key in f["label"]:
+        e["label"] = "ห้ามใส่คีย์ในชื่อเรียก ชื่อเรียกแสดงบนหน้าเว็บและในบันทึกการเปลี่ยนแปลง"
+        values["label"] = ""
+    if e:
+        return _key_form(request, values, e, status_code=422)
+    row = ProviderKey(provider=provider, label=label, secret_enc=secretbox.encrypt(key), last4=secretbox.last4(key))
+    session.add(row)
+    session.flush()
+    audit.record(session, admin.username, "key.create", f"key#{row.id} {provider}", label)
+    session.commit()
+    return _done(request, "/admin/keys", f"เพิ่มคีย์ {PROVIDER_TH[provider]} แล้ว: {label}")
+
+
+@router.get("/keys/{key_id}/replace")
+def key_replace_page(request: Request, key_id: Id, session: Session = Depends(get_session)):
+    row = session.get(ProviderKey, key_id)
+    return _missing(request) if row is None else _key_form(request, {}, {}, row)
+
+
+@router.post("/keys/{key_id}/replace", dependencies=CSRF)
+def key_replace(request: Request, key_id: Id, f: dict = _fields("key"), admin: AdminUser = Depends(deps.require_admin),
+                session: Session = Depends(get_session)):
+    row = session.get(ProviderKey, key_id)
+    if row is None:
+        return _missing(request)
+    if not secretbox.secrets_enabled():
+        return _key_form(request, {}, {}, row, status_code=409)
+    key = f["key"].strip()
+    if err := _key_error(key):
+        return _key_form(request, {}, {"key": err}, row, status_code=422)
+    row.secret_enc, row.last4, row.created_at = secretbox.encrypt(key), secretbox.last4(key), _now()
+    audit.record(session, admin.username, "key.replace", f"key#{row.id} {row.provider}", row.label)
+    session.commit()
+    return _done(request, "/admin/keys", f"เปลี่ยนคีย์แล้ว: {row.label}")
+
+
+@router.post("/keys/{key_id}/toggle", dependencies=CSRF)
+def key_toggle(request: Request, key_id: Id, admin: AdminUser = Depends(deps.require_admin),
+               session: Session = Depends(get_session)):
+    row = session.get(ProviderKey, key_id)
+    if row is None:
+        return _missing(request)
+    row.active = not row.active
+    state = "เปิดใช้งาน" if row.active else "ปิดใช้งาน"
+    audit.record(session, admin.username, "key.toggle", f"key#{row.id} {row.provider}", state)
+    session.commit()
+    return _done(request, "/admin/keys", f"{state}คีย์แล้ว: {row.label}")
+
+
+def _key_delete_page(request: Request, row: ProviderKey):
+    item = f"{PROVIDER_TH.get(row.provider, row.provider)} · {row.label} · {secretbox.mask(row.last4)}"
+    return _delete_page(request, active="key", heading="ลบคีย์ AI", item=item, action=f"/admin/keys/{row.id}/delete",
+                        back="/admin/keys", blocked=None,
+                        note="คีย์ที่ลบแล้วกู้คืนไม่ได้ ถ้าต้องการหยุดใช้ชั่วคราว ให้กดปิดใช้งานแทน")
+
+
+@router.get("/keys/{key_id}/delete")
+def key_delete_page(request: Request, key_id: Id, session: Session = Depends(get_session)):
+    row = session.get(ProviderKey, key_id)
+    return _missing(request) if row is None else _key_delete_page(request, row)
+
+
+@router.post("/keys/{key_id}/delete", dependencies=CSRF)
+def key_delete(request: Request, key_id: Id, admin: AdminUser = Depends(deps.require_admin),
+               session: Session = Depends(get_session)):
+    row = session.get(ProviderKey, key_id)
+    if row is None:
+        return _missing(request)
+    label = row.label
+    audit.record(session, admin.username, "key.delete", f"key#{row.id} {row.provider}", label)
+    session.delete(row)
+    session.commit()
+    return _done(request, "/admin/keys", f"ลบคีย์แล้ว: {label}")
+
+
+# --- device keys ------------------------------------------------------------------------------
+
+def _devices_page(request: Request, session: Session, values: dict, errors: dict, status_code=200):
+    devices = session.scalars(select(DeviceKey).order_by(DeviceKey.revoked_at.is_not(None), DeviceKey.id.desc())).all()
+    return render(request, "admin/devices_list.html", status_code=status_code, devices=devices, values=values,
+                  errors=errors, mask=secretbox.mask, when=_thai_time, env_key=bool(os.getenv("NEXXA_DEVICE_KEY")))
+
+
+@router.get("/devices")
+def devices_list(request: Request, session: Session = Depends(get_session)):
+    return _devices_page(request, session, {"label": ""}, {})
+
+
+@router.post("/devices", dependencies=CSRF)
+def device_create(request: Request, f: dict = _fields("label"), admin: AdminUser = Depends(deps.require_admin),
+                  session: Session = Depends(get_session)):
+    e: dict[str, str] = {}
+    label = _text(e, "label", f["label"], "ชื่ออุปกรณ์", LABEL_MAX)
+    if e:
+        return _devices_page(request, session, {"label": f["label"]}, e, status_code=422)
+    key = security.new_device_key()
+    row = DeviceKey(label=label, key_hash=security.hash_device_key(key), last4=secretbox.last4(key))
+    session.add(row)
+    session.flush()
+    audit.record(session, admin.username, "device.create", f"device#{row.id}", label)
+    session.commit()
+    response = render(request, "admin/device_created.html", device=row, device_key=key)
+    response.headers["Cache-Control"] = "no-store"  # the only time the key exists in clear: never cache it
+    response.headers["Pragma"] = "no-cache"
+    return response
+
+
+@router.post("/devices/{device_id}/revoke", dependencies=CSRF)
+def device_revoke(request: Request, device_id: Id, admin: AdminUser = Depends(deps.require_admin),
+                  session: Session = Depends(get_session)):
+    row = session.get(DeviceKey, device_id)
+    if row is None:
+        return _missing(request)
+    if row.revoked_at is None or row.active:
+        row.active, row.revoked_at = False, row.revoked_at or _now()
+        audit.record(session, admin.username, "device.revoke", f"device#{row.id}", row.label)
+        session.commit()
+    return _done(request, "/admin/devices", f"ยกเลิก device key แล้ว: {row.label} (อุปกรณ์ที่ใช้คีย์นี้จะส่งภาพไม่ได้อีก)")
+
+
+# --- AI settings ------------------------------------------------------------------------------
+
+AI_FIELDS = {"provider": runtime_config.VISION_PROVIDER, "model": runtime_config.VISION_MODEL,
+             "base_url": runtime_config.VISION_BASE_URL}
+
+
+def _readiness() -> list[dict]:
+    selected, model = runtime_config.vision_provider(), runtime_config.vision_model()
+    cards = []
+    for name, prov in PROVIDERS.items():
+        source = "web" if runtime_config.db_provider_key(name) else "env" if os.getenv(prov.key_env) else None
+        has_model = prov.kind == "anthropic" or bool(model)  # anthropic has a built-in default model
+        missing = [text for ok, text in ((source, "ยังไม่มีคีย์"), (has_model, "ยังไม่ได้ตั้งชื่อรุ่น")) if not ok]
+        cards.append({"name": name, "label": PROVIDER_TH.get(name, name), "selected": name == selected,
+                      "source": source, "key_env": prov.key_env, "has_model": has_model, "missing": missing})
+    return cards
+
+
+def _ai_page(request: Request, values: dict, errors: dict, status_code=200):
+    env = {"provider": os.getenv("NEXXA_VISION_PROVIDER", "").strip().lower() or "anthropic",
+           "model": os.getenv("NEXXA_VISION_MODEL") or "", "base_url": bool(os.getenv("NEXXA_VISION_BASE_URL"))}
+    return render(request, "admin/ai_settings.html", status_code=status_code, values=values, errors=errors,
+                  providers=_provider_options(), cards=_readiness(), env=env, secrets_on=secretbox.secrets_enabled(),
+                  model_now=runtime_config.vision_model())
+
+
+@router.get("/ai")
+def ai_settings(request: Request, session: Session = Depends(get_session)):
+    values = {field: runtime_config.get_setting(key, session) or "" for field, key in AI_FIELDS.items()}
+    return _ai_page(request, values, {})
+
+
+@router.post("/ai", dependencies=CSRF)
+def ai_settings_save(request: Request, f: dict = _fields(*AI_FIELDS), admin: AdminUser = Depends(deps.require_admin),
+                     session: Session = Depends(get_session)):
+    clean = {k: v.strip() for k, v in f.items()}
+    e: dict[str, str] = {}
+    if clean["provider"] and clean["provider"] not in PROVIDERS:
+        e["provider"] = "กรุณาเลือกผู้ให้บริการจากรายการ"
+    if clean["model"] and (len(clean["model"]) > MODEL_MAX or not MODEL_RE.fullmatch(clean["model"])):
+        e["model"] = f"ชื่อรุ่นใช้ได้เฉพาะตัวอักษรภาษาอังกฤษ ตัวเลข และ . _ - : / @ + (ไม่เกิน {MODEL_MAX} ตัวอักษร)"
+    if err := base_url_error(clean["base_url"]):
+        e["base_url"] = err
+    if e:
+        return _ai_page(request, clean, e, status_code=422)
+    changed = []
+    for field, key in AI_FIELDS.items():
+        row = session.get(AppSetting, key)
+        if (row.value if row else "") == clean[field]:
+            continue
+        changed.append(key)
+        if not clean[field]:
+            session.delete(row)  # empty = back to the environment / provider default
+        elif row is None:
+            session.add(AppSetting(key=key, value=clean[field]))
+        else:
+            row.value = clean[field]
+    audit.record(session, admin.username, "ai.update", "ai_settings", _update_detail(changed))  # names only
+    session.commit()
+    return _done(request, "/admin/ai", "บันทึกการตั้งค่า AI แล้ว")

@@ -1,4 +1,3 @@
-import hmac
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Form, Header, HTTPException, Request, UploadFile
@@ -7,13 +6,13 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import analyzer, storage
+from app import analyzer, runtime_config, storage
 from app.config import settings
 from app.db import engine, get_session, init_db
 from app.models import Analysis, Capture, Crop, Round, Station
 from app.quality import ImageDecodeError, check_quality
 from app.seed import seed
-from app.web import deps, routes_admin, routes_auth
+from app.web import deps, routes_admin, routes_auth, routes_keys
 from app.web.templating import STATIC_DIR
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
@@ -74,13 +73,13 @@ async def page_security_headers(request: Request, call_next):
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 app.include_router(routes_auth.router)
 app.include_router(routes_admin.router)
+app.include_router(routes_keys.router)
 app.add_exception_handler(deps.CsrfError, routes_auth.csrf_error_page)
 
 
-def require_device_key(x_device_key: str | None = Header(None)) -> None:
-    key = settings.device_key
-    # fail closed: no configured key means nobody gets in
-    if not key or x_device_key is None or not hmac.compare_digest(x_device_key.encode(), key.encode()):
+def require_device_key(x_device_key: str | None = Header(None), session: Session = Depends(get_session)) -> None:
+    # web-created keys (hash) or env NEXXA_DEVICE_KEY; fail closed: no configured key means nobody gets in
+    if not runtime_config.device_key_valid(x_device_key, session):
         raise HTTPException(401, "invalid device key")
 
 

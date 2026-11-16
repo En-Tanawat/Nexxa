@@ -1,12 +1,12 @@
 import base64
 import json
 import logging
-import os
 from dataclasses import dataclass
 
 import anthropic
 import openai
 
+from app import runtime_config
 from app.config import settings
 from app.models import Crop
 from app.providers import UnknownProviderError, get_provider
@@ -59,14 +59,15 @@ def _cause(e: Exception) -> str:
 def check_vision_config() -> None:
     """Startup warning (names only, never values) when a non-anthropic provider cannot work."""
     try:
-        prov = get_provider(settings.vision_provider)
+        prov = get_provider(runtime_config.vision_provider())
     except UnknownProviderError:
         log.warning("NEXXA_VISION_PROVIDER is not a known provider")
         return
     if prov.kind == "anthropic":
         return
-    for var in ("NEXXA_VISION_MODEL", prov.key_env):
-        if not os.getenv(var):
+    for var, ok in (("NEXXA_VISION_MODEL", runtime_config.vision_model()),
+                    (prov.key_env, runtime_config.provider_api_key(prov.name))):
+        if not ok:
             log.warning("vision provider %s is selected but %s is not set; analysis will fail", prov.name, var)
 
 
@@ -100,11 +101,15 @@ def _finalize(text: str, crop: Crop, model: str, who: str = "Claude", parse=json
 
 def _analyze_anthropic(image_bytes: bytes, media_type: str, crop: Crop, prompt: str, client) -> AnalysisResult:
     schema = _schema(crop)
+    requested = runtime_config.get_setting(runtime_config.VISION_MODEL) or settings.vision_model
     try:
-        client = client or anthropic.Anthropic(timeout=60, max_retries=1)
+        if client is None:
+            # no web key: let the SDK read ANTHROPIC_API_KEY from the environment exactly as before
+            key = runtime_config.db_provider_key("anthropic")
+            client = anthropic.Anthropic(**({"api_key": key} if key else {}), timeout=60, max_retries=1)
         # fallbacks live in the beta namespace; they re-run a safety-declined request server-side
         resp = client.beta.messages.create(
-            model=settings.vision_model,
+            model=requested,
             max_tokens=8192,  # adaptive thinking counts toward this cap
             betas=["server-side-fallback-2026-07-01"],
             fallbacks="default",
@@ -121,8 +126,8 @@ def _analyze_anthropic(image_bytes: bytes, media_type: str, crop: Crop, prompt: 
         )
     except (anthropic.AnthropicError, TypeError) as e:  # TypeError: SDK raises it for a missing API key
         log.exception("Claude API call failed")
-        return _fail(f"เรียก Claude ไม่สำเร็จ ({_cause(e)})")
-    model = getattr(resp, "model", None) or settings.vision_model  # may differ after a server-side fallback
+        return _fail(f"เรียก Claude ไม่สำเร็จ ({_cause(e)})", requested)
+    model = getattr(resp, "model", None) or requested  # may differ after a server-side fallback
     if resp.stop_reason == "refusal":  # check before touching content
         return _fail("Claude ปฏิเสธการวิเคราะห์ภาพนี้", model)
     if resp.stop_reason == "max_tokens":
@@ -138,21 +143,21 @@ def _analyze_anthropic(image_bytes: bytes, media_type: str, crop: Crop, prompt: 
 
 def _analyze_openai_compat(image_bytes, media_type, crop, prompt, client, provider) -> AnalysisResult:
     # non-anthropic providers have no default model: guessing a name would silently call the wrong thing
-    model = os.getenv("NEXXA_VISION_MODEL")
+    model = runtime_config.vision_model()
     if not model:
         log.error("NEXXA_VISION_MODEL is not set (provider %s)", provider.name)
-        return _fail(f"ยังไม่ได้ตั้งค่า NEXXA_VISION_MODEL สำหรับผู้ให้บริการ {provider.name}", provider.name)
+        return _fail(f"ยังไม่ได้ตั้งชื่อรุ่น (หน้าตั้งค่า AI หรือ NEXXA_VISION_MODEL) สำหรับผู้ให้บริการ {provider.name}", provider.name)
     instruction = ('\nตอบเป็น JSON object เดียวเท่านั้น รูปแบบ {"label": ..., "confidence": 0-1, "note": ...} '
                    "ห้ามมีข้อความอื่น")
     data_uri = f"data:{media_type};base64,{base64.standard_b64encode(image_bytes).decode()}"
     try:
         if client is None:
-            key = os.getenv(provider.key_env)
+            key = runtime_config.provider_api_key(provider.name)
             if not key:
                 log.error("%s is not set (provider %s)", provider.key_env, provider.name)
-                return _fail(f"ยังไม่ได้ตั้งค่า {provider.key_env} สำหรับผู้ให้บริการ {provider.name}", model)
+                return _fail(f"ยังไม่มีคีย์ (หน้าคีย์ AI หรือ {provider.key_env}) สำหรับผู้ให้บริการ {provider.name}", model)
             try:
-                client = openai.OpenAI(api_key=key, base_url=settings.vision_base_url or provider.base_url,
+                client = openai.OpenAI(api_key=key, base_url=runtime_config.vision_base_url() or provider.base_url,
                                        timeout=60, max_retries=1)
             except Exception as e:  # e.g. httpx InvalidURL for a malformed base url; not an OpenAIError
                 # type only, no traceback: the message can echo the base url / credentials
@@ -195,7 +200,7 @@ def analyze_leaf(image_bytes: bytes, crop: Crop, client=None, provider: str | No
         log.exception("analyze_leaf: no usable crop")
         return _fail("ไม่มีข้อมูลพืชสำหรับวิเคราะห์")
     try:
-        prov = get_provider(provider or settings.vision_provider)
+        prov = get_provider(provider or runtime_config.vision_provider())
     except UnknownProviderError as e:
         log.exception("analyze_leaf: bad provider")
         return _fail(str(e))
