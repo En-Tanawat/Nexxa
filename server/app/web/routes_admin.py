@@ -804,7 +804,7 @@ def robot_reset(
 
 # --- settings & demo data ----------------------------------------------------------
 
-SETTING_KEYS = ("robot_stream_url", "robot_name", "greenhouse_name", "greenhouse_location", "alert_email")
+SETTING_KEYS = ("robot_name", "greenhouse_name", "greenhouse_location", "alert_email")
 
 
 @router.get("/settings", dependencies=[Depends(deps.require_permission("setting", "read"))])
@@ -812,7 +812,6 @@ def settings_page(request: Request, session: Session = Depends(get_session)):
     settings_rows = session.scalars(select(AppSetting).where(AppSetting.key.in_(SETTING_KEYS))).all()
     stored = {row.key: row.value for row in settings_rows}
     values = {
-        "robot_stream_url": stored.get("robot_stream_url") or "",
         "robot_name": stored.get("robot_name") or "ESP32-CAM Rover Alpha",
         "greenhouse_name": stored.get("greenhouse_name") or "โรงเรือนทดลอง NEXXA",
         "greenhouse_location": stored.get("greenhouse_location") or "อาคารวิจัยการเกษตรอัจฉริยะ",
@@ -838,13 +837,6 @@ def settings_save(
     session: Session = Depends(get_session),
 ):
     e: dict[str, str] = {}
-    url = f.get("robot_stream_url", "").strip()
-    if url:
-        if len(url) > 500:
-            e["robot_stream_url"] = "URL ยาวเกินไป (ไม่เกิน 500 ตัวอักษร)"
-        elif not (url.startswith("http://") or url.startswith("https://")):
-            e["robot_stream_url"] = "URL ต้องขึ้นต้นด้วย http:// หรือ https://"
-
     _text(e, "robot_name", f.get("robot_name", ""), "ชื่อหุ่นยนต์", 100, required=False)
     _text(e, "greenhouse_name", f.get("greenhouse_name", ""), "ชื่อโรงเรือน", 100, required=False)
     _text(e, "greenhouse_location", f.get("greenhouse_location", ""), "ที่ตั้งโรงเรือน", 200, required=False)
@@ -876,7 +868,7 @@ def settings_save(
             else:
                 row.value = val
 
-    audit.record(session, admin.username, "setting.update", "robot_stream_url", url or "(ค่าเริ่มต้น)")
+    audit.record(session, admin.username, "setting.update", "settings", "บันทึกการตั้งค่าระบบ")
     session.commit()
     return _done(request, "/admin/settings", "บันทึกการตั้งค่าระบบแล้ว")
 

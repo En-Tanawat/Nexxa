@@ -1,9 +1,11 @@
 import logging
 import os
+import struct
 from contextlib import asynccontextmanager
 from datetime import date
 
 from fastapi import Depends, FastAPI, Form, Header, HTTPException, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
@@ -14,13 +16,15 @@ from app import analyzer, robot, runtime_config, stats, storage
 from app.config import settings
 from app.db import engine, get_session, init_db
 from app.models import Analysis, Capture, Crop, Round, Station
-from app.quality import ImageDecodeError, check_quality
+from app.quality import ImageDecodeError, check_quality, jpeg_decodes
 from app.seed import seed
 from app.web import deps, routes_admin, routes_auth, routes_keys, routes_public, routes_public_api
 from app.web.templating import STATIC_DIR
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 MULTIPART_OVERHEAD = 64 * 1024  # form fields + boundaries on top of the image
+MAX_FRAME_BYTES = 200 * 1024  # one relayed camera frame (OV2640 JPEGs are typically 15-60 KB)
+MAX_FRAME_DIM = 1600  # OV2640 max is 1600x1200
 log = logging.getLogger(__name__)
 
 
@@ -79,7 +83,7 @@ CSP = "; ".join([
     "script-src 'self'",
     "style-src 'self' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com",
-    "img-src 'self' data: http: https:",
+    "img-src 'self' data:",
     "connect-src 'self'",
     "object-src 'none'",
     "base-uri 'none'",
@@ -126,7 +130,6 @@ class RobotTelemetryInput(BaseModel):
     camera_angle: str | None = None
     step: str | None = None
     step_index: int | None = None
-    stream_url: str | None = None
     battery_pct: int | None = None
     wifi_rssi: int | None = None
 
@@ -163,6 +166,71 @@ class RobotTelemetryInput(BaseModel):
 def post_robot_telemetry(payload: RobotTelemetryInput, session: Session = Depends(get_session)):
     robot.robot.update_telemetry(session, payload.model_dump(exclude_unset=True))
     return {"ok": True, "updated_at": robot.robot.updated_at}
+
+
+def _jpeg_size(data: bytes) -> tuple[int, int] | None:
+    """(width, height) from the first SOF marker, or None. Read from the header so a tiny JPEG that claims
+    65535x65535 is rejected before cv2 would allocate gigabytes for it."""
+    if data[:3] != b"\xff\xd8\xff":
+        return None
+    i, n = 2, len(data)
+    while i + 4 <= n:
+        if data[i] != 0xFF:
+            return None
+        marker = data[i + 1]
+        if marker == 0xFF:  # fill byte
+            i += 1
+            continue
+        if marker in (0x01, 0xD8) or 0xD0 <= marker <= 0xD7:  # standalone markers, no length
+            i += 2
+            continue
+        (length,) = struct.unpack(">H", data[i + 2:i + 4])
+        if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):  # SOFn
+            if i + 9 > n:
+                return None
+            h, w = struct.unpack(">HH", data[i + 5:i + 9])
+            return w, h
+        if marker == 0xDA:  # start of scan before any SOF
+            return None
+        i += 2 + length
+    return None
+
+
+def _validate_and_store_frame(data: bytes) -> int:
+    size = _jpeg_size(data)
+    if size is None:
+        raise HTTPException(422, "not a jpeg")
+    if not (0 < size[0] <= MAX_FRAME_DIM and 0 < size[1] <= MAX_FRAME_DIM):
+        raise HTTPException(422, f"image larger than {MAX_FRAME_DIM}x{MAX_FRAME_DIM}")
+    if not jpeg_decodes(data):
+        raise HTTPException(422, "not a jpeg")
+    return robot.robot.store_frame(data)
+
+
+@app.post("/api/robot/frame", dependencies=[Depends(require_device_key)])
+async def post_robot_frame(request: Request):
+    """Latest camera frame from the robot: raw JPEG body (Content-Type image/jpeg), <= 200 KB, <= 1600x1600,
+    at most one accepted frame per second. Kept in memory only (see robot.py)."""
+    ctype = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if ctype != "image/jpeg":
+        raise HTTPException(415, "Content-Type must be image/jpeg")
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > MAX_FRAME_BYTES:
+        raise HTTPException(413, "frame too large")
+    wait = robot.robot.frame_retry_after()
+    if wait:
+        raise HTTPException(429, "too many frames", headers={"Retry-After": str(wait)})
+    chunks, total = [], 0
+    async for chunk in request.stream():  # chunked uploads have no Content-Length: cap what we read
+        total += len(chunk)
+        if total > MAX_FRAME_BYTES:
+            raise HTTPException(413, "frame too large")
+        chunks.append(chunk)
+    data = b"".join(chunks)
+    wait = await run_in_threadpool(_validate_and_store_frame, data)
+    if wait:
+        raise HTTPException(429, "too many frames", headers={"Retry-After": str(wait)})
+    return {"ok": True, "bytes": len(data), "interval_min_s": robot.FRAME_MIN_INTERVAL_S}
 
 
 @app.post("/rounds", dependencies=[Depends(require_device_key)])

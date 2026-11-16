@@ -99,11 +99,15 @@
   // Robot ESP32 live monitor auto-polling
   const robotRoot = document.querySelector("[data-robot-monitor]");
   if (robotRoot) {
+    let cam = null;
+    import("/static/js/robot-cam.js").then((m) => { cam = m.initRobotCam(); poll(); }).catch(() => {});
     const poll = () => {
+      if (document.hidden) return;
       fetch("/api/public/robot")
         .then((r) => r.json())
         .then((data) => {
           if (!data) return;
+          if (cam) cam.setStatus(data);
           const setTxt = (id, txt) => {
             const el = robotRoot.querySelector(`[data-robot-${id}]`);
             if (el && txt !== undefined && txt !== null) el.textContent = txt;
@@ -126,5 +130,6 @@
         .catch(() => {});
     };
     setInterval(poll, 4000);
+    document.addEventListener("visibilitychange", poll);
   }
 })();

@@ -6,6 +6,7 @@ import {
   activityFeed, errorMessage, fmtDateTime, fmtInt, fmtPct, fmtTime, freshness, getJson, harvestInfo,
   relativeTime, statusInfo, trendInfo, yesterdayAbnormal,
 } from "./public-lib.js";
+import { initRobotCam as initCamFrames } from "./robot-cam.js";
 
 const REFRESH_MS = 60_000;
 const TICK_MS = 30_000; // re-evaluates "fresh / stale" and "5 minutes ago" without a request
@@ -211,8 +212,7 @@ function stopTimers() {
 const ROBOT_POLL_MS = 3_000;
 let robotTimer = null;
 let robotInflight = false;
-let robotStreamError = false;
-let currentStreamUrl = "";
+let robotCam = null;
 
 function scheduleRobot(ms) {
   clearTimeout(robotTimer);
@@ -246,17 +246,7 @@ function renderRobotOffline() {
   if (dot) dot.className = "robot-pulse-dot robot-pulse-dot--neutral";
   if (label) label.textContent = "ออฟไลน์";
 
-  const img = $("robot-cam-stream");
-  const fallback = $("robot-cam-fallback");
-  const fbTitle = $("robot-fallback-title");
-  const fbText = $("robot-fallback-text");
-  if (img) img.hidden = true;
-  if (fallback) fallback.hidden = false;
-  if (fbTitle) fbTitle.textContent = "หุ่นยนต์ออฟไลน์";
-  if (fbText) fbText.textContent = "หุ่นยนต์หยุดส่งข้อมูลเกิน 45 วินาที สัญญาณภาพจะปรากฏเมื่อหุ่นยนต์กลับมาออนไลน์";
-
-  const chipLive = $("robot-chip-live-text");
-  if (chipLive) chipLive.textContent = "⚪ ออฟไลน์";
+  if (robotCam) robotCam.setStatus({ online: false });
 
   if ($("robot-chip-angle")) $("robot-chip-angle").hidden = true;
   if ($("robot-chip-station")) $("robot-chip-station").hidden = true;
@@ -306,41 +296,7 @@ function renderRobot(data) {
     }
   }
 
-  const img = $("robot-cam-stream");
-  const fallback = $("robot-cam-fallback");
-  const fbTitle = $("robot-fallback-title");
-  const fbText = $("robot-fallback-text");
-  const chipLiveText = $("robot-chip-live-text");
-
-  if (img && fallback) {
-    if (!isOnline) {
-      img.hidden = true;
-      fallback.hidden = false;
-      if (fbTitle) fbTitle.textContent = "หุ่นยนต์ออฟไลน์";
-      if (fbText) fbText.textContent = "หุ่นยนต์หยุดส่งข้อมูลเกิน 45 วินาที สัญญาณภาพจะปรากฏเมื่อหุ่นยนต์กลับมาออนไลน์";
-      if (chipLiveText) chipLiveText.textContent = "⚪ ออฟไลน์";
-    } else if (!data.stream_url) {
-      img.hidden = true;
-      fallback.hidden = false;
-      if (fbTitle) fbTitle.textContent = "กล้องอยู่ในโหมดสแตนด์บาย";
-      if (fbText) fbText.textContent = "ยังไม่ได้เชื่อมต่อ URL สัญญาณภาพจากกล้อง ESP32-CAM";
-      if (chipLiveText) chipLiveText.textContent = "⚪ สแตนด์บาย";
-    } else if (robotStreamError) {
-      img.hidden = true;
-      fallback.hidden = false;
-      if (fbTitle) fbTitle.textContent = "สัญญาณภาพขัดข้อง";
-      if (fbText) fbText.textContent = "ไม่สามารถเชื่อมต่อกล้อง ESP32-CAM ได้ กรุณาตรวจสอบว่ากล้องเปิดอยู่และเชื่อมต่อ Wi-Fi วงเดียวกัน";
-      if (chipLiveText) chipLiveText.textContent = "⚪ สัญญาณหลุด";
-    } else {
-      fallback.hidden = true;
-      img.hidden = false;
-      if (currentStreamUrl !== data.stream_url) {
-        currentStreamUrl = data.stream_url;
-        img.setAttribute("src", data.stream_url);
-      }
-      if (chipLiveText) chipLiveText.textContent = "🔴 ถ่ายทอดสด";
-    }
-  }
+  if (robotCam) robotCam.setStatus(data);
 
   const angleChip = $("robot-chip-angle");
   const angleText = $("robot-chip-angle-text");
@@ -420,29 +376,7 @@ function renderRobot(data) {
 }
 
 function initRobotCam() {
-  const img = $("robot-cam-stream");
-  if (img) {
-    img.addEventListener("error", () => {
-      robotStreamError = true;
-      const fb = $("robot-cam-fallback");
-      if (fb) fb.hidden = false;
-      img.hidden = true;
-      const fbTitle = $("robot-fallback-title");
-      const fbText = $("robot-fallback-text");
-      const chipLive = $("robot-chip-live-text");
-      if (fbTitle) fbTitle.textContent = "สัญญาณภาพขัดข้อง";
-      if (fbText) fbText.textContent = "ไม่สามารถเชื่อมต่อกล้อง ESP32-CAM ได้ กรุณาตรวจสอบว่ากล้องเปิดอยู่และเชื่อมต่อ Wi-Fi วงเดียวกัน";
-      if (chipLive) chipLive.textContent = "⚪ ขัดข้อง";
-    });
-    img.addEventListener("load", () => {
-      robotStreamError = false;
-      img.hidden = false;
-      const fb = $("robot-cam-fallback");
-      if (fb) fb.hidden = true;
-      const chipLive = $("robot-chip-live-text");
-      if (chipLive) chipLive.textContent = "🔴 ถ่ายทอดสด";
-    });
-  }
+  robotCam = initCamFrames();
 
   const fsBtn = $("robot-cam-fs-btn");
   if (fsBtn) {

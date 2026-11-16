@@ -21,12 +21,10 @@
       </div>
       {% endcall %}
 
-      {% call c.card("การถ่ายทอดสดจากหุ่นยนต์ (Robot Live Stream)", subtitle="URL สำหรับดูภาพสดจากกล้อง ESP32-CAM ของหุ่นยนต์", icon="camera") %}
+      {% call c.card("หุ่นยนต์ ESP32", subtitle="ชื่อที่ใช้แสดงผล หุ่นยนต์ส่งภาพจากกล้องมายังเซิร์ฟเวอร์เองผ่าน Device Key", icon="camera") %}
       <div class="form-grid">
         {{ c.field("robot_name", "ชื่อหุ่นยนต์ ESP32", value=values["robot_name"], error=errors.get("robot_name"), required=false,
                    help="เช่น ESP32-CAM Rover Alpha", attrs={"maxlength": 100, "autocomplete": "off"}) }}
-        {{ c.field("robot_stream_url", "URL สตรีมกล้องหุ่นยนต์ (MJPEG Stream)", value=values["robot_stream_url"], error=errors.get("robot_stream_url"), required=false,
-                   help="เช่น http://192.168.1.150:81/stream หรือปล่อยว่างไว้หากส่งผ่าน telemetry", attrs={"maxlength": 500, "autocomplete": "off"}) }}
       </div>
       <div class="form-actions">{{ c.button("บันทึกการตั้งค่า", icon="ok") }}</div>
       {% endcall %}

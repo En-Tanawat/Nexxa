@@ -65,7 +65,7 @@
       <span class="icon-tile">{{ c.icon("camera", 20) }}</span>
       <div class="robot-monitor__head-titles">
         <h2 class="card__title" id="robot-monitor-title">กล้องและขั้นตอนการตรวจของหุ่นยนต์</h2>
-        <p class="card__subtitle">ถ่ายทอดสดและติดตามขั้นตอนการตรวจแปลงผักอัตโนมัติ (Live Robot &amp; Camera Monitor)</p>
+        <p class="card__subtitle">ภาพล่าสุดจากกล้อง ESP32-CAM อัปเดตทุก ~5 วินาทีขณะหุ่นยนต์ทำงาน และขั้นตอนการตรวจแปลงผัก</p>
       </div>
       <div class="robot-monitor__head-status">
         <span class="badge badge--neutral" id="robot-badge-status">
@@ -78,25 +78,26 @@
     <div class="robot-monitor__grid">
       <!-- Camera Stream Column -->
       <div class="robot-cam-box">
-        <div class="robot-cam-frame" id="robot-cam-frame" tabindex="0" role="region" aria-label="ภาพถ่ายทอดสดจากหุ่นยนต์">
-          <img id="robot-cam-stream" class="robot-cam-img" alt="ภาพถ่ายทอดสดจากกล้องหุ่นยนต์" hidden>
+        <div class="robot-cam-frame" id="robot-cam-frame" tabindex="0" role="region" aria-label="ภาพล่าสุดจากกล้องหุ่นยนต์">
+          <img id="robot-cam-stream" class="robot-cam-img" alt="ภาพล่าสุดจากกล้อง ESP32-CAM ของหุ่นยนต์" hidden>
           
           <div class="robot-cam-fallback" id="robot-cam-fallback">
             <span class="robot-cam-fallback__icon">{{ c.icon("camera", 36) }}</span>
-            <p class="robot-cam-fallback__title" id="robot-fallback-title">กล้องอยู่ในโหมดสแตนด์บาย</p>
-            <p class="robot-cam-fallback__text" id="robot-fallback-text">สัญญาณภาพจะเปิดอัตโนมัติเมื่อหุ่นยนต์เริ่มออกตรวจแปลงผัก</p>
+            <p class="robot-cam-fallback__title" id="robot-fallback-title">ยังไม่มีภาพจากกล้อง</p>
+            <p class="robot-cam-fallback__text" id="robot-fallback-text">หุ่นยนต์จะส่งภาพเมื่อเริ่มตรวจ</p>
           </div>
 
           <div class="robot-cam-overlay robot-cam-overlay--top">
             <div class="robot-cam-chips">
               <span class="robot-chip robot-chip--live" id="robot-chip-live">
                 <span class="robot-pulse-dot" aria-hidden="true"></span>
-                <span id="robot-chip-live-text">⚪ สแตนด์บาย</span>
+                <span id="robot-chip-live-text">⚪ รอภาพ</span>
               </span>
               <span class="robot-chip" id="robot-chip-angle" hidden>
                 <span class="robot-chip__icon">{{ c.icon("camera", 14) }}</span>
                 <span id="robot-chip-angle-text">มุม: หน้า</span>
               </span>
+              <span class="robot-chip" id="robot-cam-age" hidden></span>
               <span class="robot-chip" id="robot-chip-station" hidden>
                 <span class="robot-chip__icon" aria-hidden="true">📍</span>
                 <span id="robot-chip-station-text">สถานี 1</span>

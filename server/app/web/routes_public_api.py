@@ -59,7 +59,10 @@ def limit_and_cache(request: Request, response: Response) -> None:
     ip = request.client.host if request.client else "unknown"
     if not allow(ip):
         raise HTTPException(429, "too many requests", headers={"Retry-After": str(WINDOW_S), "Cache-Control": "no-store"})
-    response.headers["Cache-Control"] = "public, max-age=30"
+    req_url = getattr(request, "url", None)
+    req_path = getattr(req_url, "path", "") if req_url else ""
+    if not req_path.endswith("/robot/frame"):  # the frame route sets its own no-store
+        response.headers["Cache-Control"] = "public, max-age=30"
 
 
 router = APIRouter(prefix="/api/public", dependencies=[Depends(limit_and_cache)])
@@ -228,3 +231,13 @@ def twin(session: Session = Depends(get_session)):
 def robot_status(session: Session = Depends(get_session)):
     return robot.robot.get_robot_status(session)
 
+
+@router.get("/robot/frame")
+def robot_frame():
+    """Latest relayed camera frame (JPEG), 204 when there is none or it is older than 60 s. Same per-IP limiter."""
+    got = robot.robot.get_frame()
+    if got is None:
+        return Response(status_code=204, headers={"Cache-Control": "no-store"})
+    data, age = got
+    return Response(data, media_type="image/jpeg", headers={
+        "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "X-Frame-Age": str(age)})

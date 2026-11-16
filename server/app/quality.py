@@ -55,3 +55,11 @@ def check_quality(image_bytes: bytes) -> QualityResult:
     else:
         reason = None
     return QualityResult(reason is None, reason, blur_score, brightness)
+
+
+def jpeg_decodes(data: bytes) -> bool:
+    """True when OpenCV can decode `data` (1/8-scale decode: cheap, still proves the stream is valid)."""
+    try:
+        return data != b"" and cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_REDUCED_COLOR_8) is not None
+    except cv2.error:
+        return False

@@ -1,16 +1,20 @@
 """In-memory thread-safe state container and tracker for NEXXA robot telemetry.
 
 Tracks live state (idle, moving, inspecting, analyzing, returning, docked, error),
-inspection step pipeline (1..5), camera stream URL, battery, Wi-Fi RSSI, and handles
+inspection step pipeline (1..5), battery, Wi-Fi RSSI, the latest camera frame (relay), and handles
 automatic synchronization from round creation and leaf capture analysis.
+
+The relayed camera frame lives in memory only (latest JPEG + receive time): it is lost on restart and not
+shared between worker processes (shortcut: single process; use a shared store if scaled out).
 """
+import math
 import threading
 import time
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import AppSetting, Station
+from app.models import Station
 
 STATE_LABELS = {
     "idle": "พร้อมเริ่มตรวจรอบใหม่",
@@ -33,6 +37,10 @@ ANGLE_LABELS = {
 VALID_STATES = {"idle", "moving", "inspecting", "analyzing", "returning", "docked", "error"}
 VALID_ANGLES = {"front", "right", "back", "left"}
 
+FRAME_MIN_INTERVAL_S = 1  # minimum seconds between accepted frames
+FRAME_MAX_AGE_S = 60  # an older frame is not served and the camera counts as unavailable
+FRAME_REFRESH_S = 5  # how often the dashboard re-fetches while the robot is online
+
 
 class RobotMonitor:
     def __init__(self):
@@ -45,10 +53,11 @@ class RobotMonitor:
         self.step: str = "พร้อมเริ่มรอบใหม่"
         self.step_index: int = 1
         self.total_steps: int = 5
-        self.stream_url: str = ""
         self.battery_pct: int | None = None
         self.wifi_rssi: int | None = None
         self.updated_at: float = 0.0
+        self._frame: bytes | None = None
+        self._frame_at: float = 0.0
 
     def reset(self) -> None:
         """Reset state to initial defaults (used for testing and full reset)."""
@@ -61,10 +70,11 @@ class RobotMonitor:
             self.step = "พร้อมเริ่มรอบใหม่"
             self.step_index = 1
             self.total_steps = 5
-            self.stream_url = ""
             self.battery_pct = None
             self.wifi_rssi = None
             self.updated_at = 0.0
+            self._frame = None
+            self._frame_at = 0.0
 
     def update_telemetry(self, session: Session | None, data: dict) -> None:
         """Update robot monitor from external telemetry JSON payload."""
@@ -85,8 +95,6 @@ class RobotMonitor:
                         self.step_index = idx
                 except (ValueError, TypeError):
                     pass
-            if "stream_url" in data and data["stream_url"] is not None:
-                self.stream_url = str(data["stream_url"]).strip()
             if "battery_pct" in data and data["battery_pct"] is not None:
                 try:
                     pct = int(data["battery_pct"])
@@ -119,6 +127,30 @@ class RobotMonitor:
                 self.station_id = st_id
 
             self.updated_at = time.time()
+
+    def frame_retry_after(self) -> int:
+        """Seconds the caller must still wait before a new frame is accepted (0 = now)."""
+        with self._lock:
+            wait = FRAME_MIN_INTERVAL_S - (time.time() - self._frame_at)
+        return max(0, math.ceil(wait))
+
+    def store_frame(self, data: bytes) -> int:
+        """Keep `data` as the latest frame and count it as a heartbeat. Returns 0, or the retry-after seconds."""
+        with self._lock:
+            now = time.time()
+            wait = FRAME_MIN_INTERVAL_S - (now - self._frame_at)
+            if wait > 0:
+                return max(1, math.ceil(wait))
+            self._frame, self._frame_at, self.updated_at = data, now, now
+            return 0
+
+    def get_frame(self) -> tuple[bytes, int] | None:
+        """(jpeg, age in whole seconds) of the latest frame, or None when there is none or it is too old."""
+        with self._lock:
+            if self._frame is None:
+                return None
+            age = int(time.time() - self._frame_at)
+            return (self._frame, age) if age <= FRAME_MAX_AGE_S else None
 
     def update_from_round(self, round_id: int) -> None:
         """Triggered automatically when a new inspection round is created."""
@@ -187,14 +219,7 @@ class RobotMonitor:
                 except Exception:
                     pass
 
-            stream_url = self.stream_url
-            if not stream_url and session:
-                try:
-                    cfg_url = session.scalar(select(AppSetting.value).where(AppSetting.key == "robot_stream_url"))
-                    if cfg_url:
-                        stream_url = cfg_url.strip()
-                except Exception:
-                    pass
+            frame_age = int(now - self._frame_at) if self._frame is not None else None
 
             raw_state = self.state if is_online else "offline"
             state_label = STATE_LABELS.get(raw_state, "ออฟไลน์" if not is_online else raw_state)
@@ -214,7 +239,11 @@ class RobotMonitor:
                 "step": step_desc,
                 "step_index": self.step_index if is_online else 1,
                 "total_steps": self.total_steps,
-                "stream_url": stream_url or "",
+                "camera": {
+                    "available": frame_age is not None and frame_age <= FRAME_MAX_AGE_S,
+                    "age_s": frame_age,
+                    "refresh_s": FRAME_REFRESH_S,
+                },
                 "battery_pct": self.battery_pct if is_online else None,
                 "wifi_rssi": self.wifi_rssi if is_online else None,
                 "updated_at": self.updated_at,
