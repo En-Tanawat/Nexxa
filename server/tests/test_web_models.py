@@ -8,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db import init_db
 from app.models import (
-    AdminUser, AppSetting, AuditLog, Batch, Capture, Crop, DailyStat, DeviceKey, ProviderKey, Station,
+    AdminUser, AppSetting, AuditLog, Batch, Crop, DailyStat, DeviceKey, ProviderKey, Station,
 )
 
 
@@ -73,6 +73,13 @@ def test_daily_stat_unique(session):
         session.commit()
 
 
+def test_daily_stat_null_batch_not_unique(session):
+    # Known limitation: NULL != NULL in SQL, so the unique constraint does not protect
+    # batch_id=None rows. The rollup must dedupe with an explicit lookup before inserting.
+    session.add_all([stat(None), stat(None)])
+    session.commit()
+
+
 def test_admin_username_unique(session):
     session.add(AdminUser(username="a", password_hash="1"))
     session.commit()
@@ -93,4 +100,3 @@ def test_indexes_present(engine):
     insp = inspect(engine)
     cols = {tuple(i["column_names"]) for t in ("captures", "daily_stats") for i in insp.get_indexes(t)}
     assert ("station_id", "taken_at") in cols and ("day", "station_id") in cols
-    assert Capture.__tablename__ == "captures"

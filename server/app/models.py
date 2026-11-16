@@ -80,6 +80,7 @@ class Batch(Base):
 
 
 class DailyStat(Base):
+    # batch_id NULL rows are NOT unique-protected (SQL NULL != NULL); upsert code must dedupe itself.
     __tablename__ = "daily_stats"
     __table_args__ = (
         UniqueConstraint("day", "station_id", "batch_id"),
