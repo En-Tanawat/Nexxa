@@ -404,15 +404,24 @@ def device_headline(text: str) -> str:
 PROMPT = (
     "คุณเป็นผู้ช่วยสรุปผลตรวจผักในโรงเรือน เขียนสรุปภาษาไทยไม่เกิน 120 คำ จากข้อมูล JSON ด้านล่างเท่านั้น "
     "ใช้เฉพาะตัวเลขที่มีในข้อมูล ห้ามเดาหรือเพิ่มตัวเลขเอง บอกว่าเมื่อเทียบกับวันก่อนหน้าเปลี่ยนไปอย่างไร แนวโน้มเป็นอย่างไร "
-    "และผู้ปลูกควรทำอะไร ถ้าข้อมูลไม่พอให้บอกตรง ๆ ตอบเป็นข้อความธรรมดา ไม่ใช้ markdown\n\nข้อมูล:\n"
+    "และผู้ปลูกควรทำอะไร พูดถึงเฉพาะใบเหลืองและจุดน้ำตาล ห้ามระบุจำนวนหรือผลของใบที่ปกติ ถ้าข้อมูลไม่พอให้บอกตรง ๆ ตอบเป็นข้อความธรรมดา ไม่ใช้ markdown\n\nข้อมูล:\n"
 )
+
+
+def _without_normal(o):
+    """Facts for the AI without any ปกติ / normal count, so its wording cannot mention one."""
+    if isinstance(o, dict):
+        return {k: _without_normal(v) for k, v in o.items() if k not in (stats.NORMAL, "normal", "n_normal")}
+    if isinstance(o, list):
+        return [_without_normal(v) for v in o]
+    return o
 
 
 def _ai_call(facts: dict) -> tuple[str, str] | None:
     """One text-only request to the configured provider. Same key lookup and base-URL checks as analyzer.py."""
     try:
         prov = get_provider(runtime_config.vision_provider())
-        content = PROMPT + json.dumps(facts, ensure_ascii=False, separators=(",", ":"))
+        content = PROMPT + json.dumps(_without_normal(facts), ensure_ascii=False, separators=(",", ":"))
         timeout = AI_BUDGET_S - 1
         if prov.kind == "anthropic":
             model = runtime_config.get_setting(runtime_config.VISION_MODEL) or settings.vision_model
