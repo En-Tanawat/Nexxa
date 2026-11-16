@@ -23,6 +23,10 @@ class Crop(Base):
 
 class Station(Base):
     __tablename__ = "stations"
+    __table_args__ = (
+        Index("ix_stations_route_order", "route_order", "id"),
+        Index("ix_stations_active", "active"),
+    )
     id: Mapped[int] = mapped_column(primary_key=True)
     rfid_uid: Mapped[str] = mapped_column(String, unique=True)
     name: Mapped[str]
@@ -72,6 +76,11 @@ class Analysis(Base):
 
 class Batch(Base):
     __tablename__ = "batches"
+    __table_args__ = (
+        Index("ix_batches_planted_on", "planted_on", "id"),
+        Index("ix_batches_harvested_on", "harvested_on"),
+        Index("ix_batches_station_crop", "station_id", "crop_id"),
+    )
     id: Mapped[int] = mapped_column(primary_key=True)
     station_id: Mapped[int] = mapped_column(ForeignKey("stations.id"))
     crop_id: Mapped[int] = mapped_column(ForeignKey("crops.id"))
@@ -87,6 +96,7 @@ class DailyStat(Base):
     __table_args__ = (
         UniqueConstraint("day", "station_id", "batch_id"),
         Index("ix_daily_stats_day_station", "day", "station_id"),
+        Index("ix_daily_stats_batch_id", "batch_id"),
     )
     id: Mapped[int] = mapped_column(primary_key=True)
     day: Mapped[date]
@@ -123,6 +133,9 @@ class ProviderKey(Base):
 
 class DeviceKey(Base):
     __tablename__ = "device_keys"
+    __table_args__ = (
+        Index("ix_device_keys_revoked_id", "revoked_at", "id"),
+    )
     id: Mapped[int] = mapped_column(primary_key=True)
     label: Mapped[str]
     key_hash: Mapped[str] = mapped_column(String, unique=True)
@@ -140,6 +153,9 @@ class AppSetting(Base):
 
 class AuditLog(Base):
     __tablename__ = "audit_log"
+    __table_args__ = (
+        Index("ix_audit_log_at", "at", "id"),
+    )
     id: Mapped[int] = mapped_column(primary_key=True)
     at: Mapped[datetime] = mapped_column(default=_now)
     actor: Mapped[str]

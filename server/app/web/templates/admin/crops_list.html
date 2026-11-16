@@ -24,4 +24,6 @@
   </tr>
   {%- endfor %}
 {% endcall %}
+
+{%- if pages > 1 %}{{ c.pager(page, pages, "/admin/crops?q=" ~ q ~ "&page=") }}{% endif %}
 {% endblock %}

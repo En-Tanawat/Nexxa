@@ -224,15 +224,26 @@ def _station_form(request: Request, session: Session, values: dict, errors: dict
 
 
 @router.get("/stations")
-def stations_list(request: Request, q: str = "", session: Session = Depends(get_session)):
+def stations_list(request: Request, q: str = "", page: str = "1", session: Session = Depends(get_session)):
     q = q.strip()[:100]
-    stmt = select(Station).order_by(Station.route_order.is_(None), Station.route_order, Station.id)
+    stmt = select(Station)
+    total = _count(session, Station.id)
     if q:
         like = _like(q)
-        stmt = stmt.where(or_(like(Station.name), like(Station.rfid_uid)))
+        cond = or_(like(Station.name), like(Station.rfid_uid))
+        stmt = stmt.where(cond)
+        matching_count = session.scalar(select(func.count(Station.id)).where(cond)) or 0
+        pages = max(1, math.ceil(matching_count / PAGE_SIZE))
+    else:
+        pages = max(1, math.ceil(total / PAGE_SIZE))
+    try:
+        page_num = min(max(int(page), 1), pages)
+    except ValueError:
+        page_num = 1
+    stmt = stmt.order_by(Station.route_order.is_(None), Station.route_order, Station.id).limit(PAGE_SIZE).offset((page_num - 1) * PAGE_SIZE)
     crops = dict(session.execute(select(Crop.id, Crop.name)).all())
     return render(request, "admin/stations_list.html", stations=session.scalars(stmt).all(), crops=crops, q=q,
-                  total=_count(session, Station.id))
+                  total=total, page=page_num, pages=pages)
 
 
 @router.get("/stations/new")
@@ -346,15 +357,26 @@ def _crop_form(request: Request, values: dict, errors: dict, crop_id: int | None
 
 
 @router.get("/crops")
-def crops_list(request: Request, q: str = "", session: Session = Depends(get_session)):
+def crops_list(request: Request, q: str = "", page: str = "1", session: Session = Depends(get_session)):
     q = q.strip()[:100]
-    stmt = select(Crop).order_by(Crop.name)
+    stmt = select(Crop)
+    total = _count(session, Crop.id)
     if q:
-        stmt = stmt.where(_like(q)(Crop.name))
+        cond = _like(q)(Crop.name)
+        stmt = stmt.where(cond)
+        matching_count = session.scalar(select(func.count(Crop.id)).where(cond)) or 0
+        pages = max(1, math.ceil(matching_count / PAGE_SIZE))
+    else:
+        pages = max(1, math.ceil(total / PAGE_SIZE))
+    try:
+        page_num = min(max(int(page), 1), pages)
+    except ValueError:
+        page_num = 1
+    stmt = stmt.order_by(Crop.name).limit(PAGE_SIZE).offset((page_num - 1) * PAGE_SIZE)
     used = dict(session.execute(select(Station.crop_id, func.count(Station.id)).where(Station.crop_id.is_not(None))
                                 .group_by(Station.crop_id)).all())
     return render(request, "admin/crops_list.html", crops=session.scalars(stmt).all(), used=used, q=q,
-                  total=_count(session, Crop.id))
+                  total=total, page=page_num, pages=pages)
 
 
 @router.get("/crops/new")
@@ -471,15 +493,28 @@ def _batch_form(request: Request, session: Session, values: dict, errors: dict, 
 
 
 @router.get("/batches")
-def batches_list(request: Request, q: str = "", session: Session = Depends(get_session)):
+def batches_list(request: Request, q: str = "", page: str = "1", session: Session = Depends(get_session)):
     q = q.strip()[:100]
-    stmt = (select(Batch, Station.name, Crop.name).join(Station, Batch.station_id == Station.id)
-            .join(Crop, Batch.crop_id == Crop.id).order_by(Batch.planted_on.desc(), Batch.id.desc()))
+    base_stmt = (select(Batch, Station.name, Crop.name).join(Station, Batch.station_id == Station.id)
+            .join(Crop, Batch.crop_id == Crop.id))
+    total = _count(session, Batch.id)
     if q:
         like = _like(q)
-        stmt = stmt.where(or_(like(Station.name), like(Crop.name), like(Batch.notes)))
+        cond = or_(like(Station.name), like(Crop.name), like(Batch.notes))
+        base_stmt = base_stmt.where(cond)
+        matching_count = session.scalar(
+            select(func.count(Batch.id)).join(Station, Batch.station_id == Station.id).join(Crop, Batch.crop_id == Crop.id).where(cond)
+        ) or 0
+        pages = max(1, math.ceil(matching_count / PAGE_SIZE))
+    else:
+        pages = max(1, math.ceil(total / PAGE_SIZE))
+    try:
+        page_num = min(max(int(page), 1), pages)
+    except ValueError:
+        page_num = 1
+    stmt = base_stmt.order_by(Batch.planted_on.desc(), Batch.id.desc()).limit(PAGE_SIZE).offset((page_num - 1) * PAGE_SIZE)
     rows = [(b, sname, cname) for b, sname, cname in session.execute(stmt).all()]
-    return render(request, "admin/batches_list.html", rows=rows, q=q, total=_count(session, Batch.id))
+    return render(request, "admin/batches_list.html", rows=rows, q=q, total=total, page=page_num, pages=pages)
 
 
 @router.get("/batches/new")

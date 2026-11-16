@@ -4,12 +4,13 @@ Secrets never leave this module in clear except once: a new device key is shown 
 Provider keys are Fernet-encrypted (secretbox) and shown only as a mask + last 4; when secretbox is off, nothing that
 would store a key is accepted. Device keys are stored as SHA-256 hashes. Audit rows never carry a secret.
 """
+import math
 import os
 import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Request
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import runtime_config
@@ -171,12 +172,26 @@ def key_delete(request: Request, key_id: Id, admin: AdminUser = Depends(deps.req
 
 # --- device keys ------------------------------------------------------------------------------
 
-def _devices_page(request: Request, session: Session, values: dict, errors: dict, status_code=200):
-    devices = session.scalars(select(DeviceKey).order_by(DeviceKey.revoked_at.is_not(None), DeviceKey.id.desc())).all()
+PAGE_SIZE = 50
+
+
+def _devices_page(request: Request, session: Session, values: dict, errors: dict, page: str = "1", status_code=200):
+    total = session.scalar(select(func.count(DeviceKey.id))) or 0
+    pages = max(1, math.ceil(total / PAGE_SIZE))
+    try:
+        page_num = min(max(int(page), 1), pages)
+    except ValueError:
+        page_num = 1
+    devices = session.scalars(
+        select(DeviceKey)
+        .order_by(DeviceKey.revoked_at.is_not(None), DeviceKey.id.desc())
+        .limit(PAGE_SIZE)
+        .offset((page_num - 1) * PAGE_SIZE)
+    ).all()
     nonce = security.new_csrf_token()  # one-time: a refreshed/replayed create form must not mint a second key
     return render(request, "admin/devices_list.html", status_code=status_code, devices=devices, values=values,
                   errors=errors, mask=secretbox.mask, when=_thai_time, env_key=bool(os.getenv("NEXXA_DEVICE_KEY")),
-                  nonce=nonce, session_update={DEVICE_NONCE: nonce})
+                  nonce=nonce, session_update={DEVICE_NONCE: nonce}, page=page_num, pages=pages, total=total)
 
 
 def _no_store(response):
@@ -186,8 +201,8 @@ def _no_store(response):
 
 
 @router.get("/devices")
-def devices_list(request: Request, session: Session = Depends(get_session)):
-    return _devices_page(request, session, {"label": ""}, {})
+def devices_list(request: Request, page: str = "1", session: Session = Depends(get_session)):
+    return _devices_page(request, session, {"label": ""}, {}, page=page)
 
 
 @router.post("/devices", dependencies=CSRF)

@@ -9,7 +9,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app import robot, stats
@@ -198,7 +198,12 @@ def twin(session: Session = Depends(get_session)):
     stations = session.execute(
         select(Station, Crop.name).outerjoin(Crop, Station.crop_id == Crop.id)
         .where(*VISIBLE).order_by(Station.route_order, Station.id)).all()
-    batches = session.scalars(select(Batch).where(Batch.planted_on <= day)).all()
+    batches = session.scalars(
+        select(Batch).where(
+            Batch.planted_on <= day,
+            or_(Batch.harvested_on.is_(None), Batch.harvested_on >= day),
+        )
+    ).all()
     out = []
     for st, crop in stations:
         # one indexed LIMIT 1 per station (captures(station_id, taken_at), analyses(capture_id)); a window query
