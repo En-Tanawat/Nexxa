@@ -27,7 +27,15 @@ def render(request: Request, template: str, *, status_code: int = 200, session_u
             new.pop(k, None)
         else:
             new[k] = v
-    ctx.setdefault("admin", getattr(request.state, "admin", None))
+    admin_user = getattr(request.state, "admin", None)
+    ctx.setdefault("admin", admin_user)
+    ctx.setdefault("can", lambda resource, action: deps.has_permission(admin_user, resource, action))
+    user_role = deps.get_user_role(admin_user) if admin_user else ""
+    ctx.setdefault("user_role", user_role)
+    ctx.setdefault("role_label", deps.get_role_label(user_role) if admin_user else "")
+    ctx.setdefault("role_badge", deps.get_role_badge_variant(user_role) if admin_user else "neutral")
+    ctx.setdefault("get_role_label", deps.get_role_label)
+    ctx.setdefault("get_role_badge", deps.get_role_badge_variant)
     html = env.get_template(template).render(
         request=request, csrf_token=new.get("csrf", ""), flash=flash,
         session_enabled=security.session_enabled(), **ctx,

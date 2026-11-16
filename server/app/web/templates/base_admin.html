@@ -1,17 +1,17 @@
 {%- extends "base_public.html" -%}
 {#- Child templates: {% set active = "stations" %} (key from NAV) and fill {% block content %}. -#}
 {%- set NAV = [
-  ("overview", "/admin", "ภาพรวม"),
-  ("robot", "/admin/robot", "หุ่นยนต์ ESP32"),
-  ("station", "/admin/stations", "สถานี"),
-  ("crop", "/admin/crops", "ชนิดผัก"),
-  ("batch", "/admin/batches", "ล็อตผัก"),
-  ("key", "/admin/keys", "คีย์ AI"),
-  ("device", "/admin/devices", "อุปกรณ์"),
-  ("ai", "/admin/ai", "ตั้งค่า AI"),
-  ("settings", "/admin/settings", "ตั้งค่าระบบ"),
-  ("users", "/admin/users", "ผู้ดูแล"),
-  ("audit", "/admin/audit", "บันทึกการเปลี่ยนแปลง"),
+  ("overview", "/admin", "ภาพรวม", "overview"),
+  ("robot", "/admin/robot", "หุ่นยนต์ ESP32", "robot"),
+  ("station", "/admin/stations", "สถานี", "station"),
+  ("crop", "/admin/crops", "ชนิดผัก", "crop"),
+  ("batch", "/admin/batches", "ล็อตผัก", "batch"),
+  ("key", "/admin/keys", "คีย์ AI", "key"),
+  ("device", "/admin/devices", "อุปกรณ์", "device"),
+  ("ai", "/admin/ai", "ตั้งค่า AI", "key"),
+  ("settings", "/admin/settings", "ตั้งค่าระบบ", "setting"),
+  ("users", "/admin/users", "ผู้ดูแล", "user"),
+  ("audit", "/admin/audit", "บันทึกการเปลี่ยนแปลง", "audit"),
 ] -%}
 {% block body_class %}page-admin{% endblock %}
 {% block body %}
@@ -21,9 +21,11 @@
     <nav class="nav" aria-label="เมนูผู้ดูแล">
       <p class="nav__heading">เมนู</p>
       <ul class="nav__list">
-        {%- for key, href, label in NAV %}
+        {%- for key, href, label, resource in NAV %}
+        {%- if not can or can(resource, "read") %}
         <li><a class="nav__link" href="{{ href }}"{% if active is defined and active == key %} aria-current="page"{% endif %} data-nav>
           {{ c.icon(key, 20) }}<span>{{ label }}</span></a></li>
+        {%- endif %}
         {%- endfor %}
       </ul>
     </nav>
@@ -42,9 +44,10 @@
     <div class="topbar__user">
       {{ c.theme_toggle() }}
       {%- if admin %}
-      <span class="user-chip" title="เข้าสู่ระบบในชื่อ {{ admin.username }}">
+      <span class="user-chip" title="เข้าสู่ระบบในชื่อ {{ admin.username }} ({{ role_label }})">
         <span class="user-chip__avatar" aria-hidden="true">{{ admin.username[:1] | upper }}</span>
         <span class="user-chip__name"><span class="sr-only">ผู้ใช้: </span>{{ admin.username }}</span>
+        {{ c.badge(role_badge, role_label) }}
       </span>
       {%- endif %}
       <form class="inline-form" method="post" action="/logout">

@@ -12,15 +12,16 @@ from app.web.security import hash_password
 MIN_PASSWORD_LEN = 10
 
 
-def create_or_update(session: Session, username: str, password: str) -> AdminUser:
+def create_or_update(session: Session, username: str, password: str, role: str = "admin") -> AdminUser:
     if len(password) < MIN_PASSWORD_LEN:
         raise ValueError(f"password must be at least {MIN_PASSWORD_LEN} characters")
     user = session.scalar(select(AdminUser).where(AdminUser.username == username))
     if user is None:
-        user = AdminUser(username=username, password_hash=hash_password(password))
+        user = AdminUser(username=username, password_hash=hash_password(password), role=role)
         session.add(user)
     else:
         user.password_hash = hash_password(password)
+        user.role = role
     session.commit()
     return user
 
@@ -30,16 +31,17 @@ def main() -> int:
 
     ap = argparse.ArgumentParser(description="Create or update a NEXXA admin user")
     ap.add_argument("--username", required=True)
+    ap.add_argument("--role", default="admin", choices=["admin", "agent", "viewer"], help="Role: admin, agent, or viewer")
     args = ap.parse_args()
     password = os.getenv("NEXXA_ADMIN_PASSWORD") or getpass.getpass("Password: ")
     init_db()
     with Session(engine) as s:
         try:
-            user = create_or_update(s, args.username, password)
+            user = create_or_update(s, args.username, password, role=args.role)
         except ValueError as e:
             print(f"error: {e}")
             return 1
-        print(f"admin '{user.username}' saved (id {user.id})")
+        print(f"user '{user.username}' saved (id {user.id}, role {user.role})")
     return 0
 
 

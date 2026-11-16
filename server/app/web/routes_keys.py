@@ -62,7 +62,7 @@ def _key_form(request: Request, values: dict, errors: dict, key: ProviderKey | N
                   mask=secretbox.mask, added=_thai_time(key.created_at)[:10] if key else "")
 
 
-@router.get("/keys")
+@router.get("/keys", dependencies=[Depends(deps.require_permission("key", "read"))])
 def keys_list(request: Request, session: Session = Depends(get_session)):
     keys = session.scalars(select(ProviderKey).order_by(ProviderKey.provider, ProviderKey.created_at.desc(),
                                                         ProviderKey.id.desc())).all()
@@ -76,14 +76,14 @@ def keys_list(request: Request, session: Session = Depends(get_session)):
                   secrets_on=secretbox.secrets_enabled(), mask=secretbox.mask, added=lambda k: _thai_time(k.created_at)[:10])
 
 
-@router.get("/keys/new")
+@router.get("/keys/new", dependencies=[Depends(deps.require_permission("key", "create"))])
 def key_new(request: Request):
     return _key_form(request, {"provider": "", "label": ""}, {})
 
 
-@router.post("/keys", dependencies=CSRF)
+@router.post("/keys", dependencies=[*CSRF, Depends(deps.require_permission("key", "create"))])
 def key_create(request: Request, f: dict = _fields("provider", "label", "key"),
-               admin: AdminUser = Depends(deps.require_admin), session: Session = Depends(get_session)):
+               admin: AdminUser = Depends(deps.require_permission("key", "create")), session: Session = Depends(get_session)):
     values = {"provider": f["provider"], "label": f["label"]}  # the key itself is never echoed back
     if not secretbox.secrets_enabled():
         return _key_form(request, values, {}, status_code=409)
@@ -108,14 +108,14 @@ def key_create(request: Request, f: dict = _fields("provider", "label", "key"),
     return _done(request, "/admin/keys", f"เพิ่มคีย์ {PROVIDER_TH[provider]} แล้ว: {label}")
 
 
-@router.get("/keys/{key_id}/replace")
+@router.get("/keys/{key_id}/replace", dependencies=[Depends(deps.require_permission("key", "update"))])
 def key_replace_page(request: Request, key_id: Id, session: Session = Depends(get_session)):
     row = session.get(ProviderKey, key_id)
     return _missing(request) if row is None else _key_form(request, {}, {}, row)
 
 
-@router.post("/keys/{key_id}/replace", dependencies=CSRF)
-def key_replace(request: Request, key_id: Id, f: dict = _fields("key"), admin: AdminUser = Depends(deps.require_admin),
+@router.post("/keys/{key_id}/replace", dependencies=[*CSRF, Depends(deps.require_permission("key", "update"))])
+def key_replace(request: Request, key_id: Id, f: dict = _fields("key"), admin: AdminUser = Depends(deps.require_permission("key", "update")),
                 session: Session = Depends(get_session)):
     row = session.get(ProviderKey, key_id)
     if row is None:
@@ -131,8 +131,8 @@ def key_replace(request: Request, key_id: Id, f: dict = _fields("key"), admin: A
     return _done(request, "/admin/keys", f"เปลี่ยนคีย์แล้ว: {row.label}")
 
 
-@router.post("/keys/{key_id}/toggle", dependencies=CSRF)
-def key_toggle(request: Request, key_id: Id, admin: AdminUser = Depends(deps.require_admin),
+@router.post("/keys/{key_id}/toggle", dependencies=[*CSRF, Depends(deps.require_permission("key", "update"))])
+def key_toggle(request: Request, key_id: Id, admin: AdminUser = Depends(deps.require_permission("key", "update")),
                session: Session = Depends(get_session)):
     row = session.get(ProviderKey, key_id)
     if row is None:
@@ -151,14 +151,14 @@ def _key_delete_page(request: Request, row: ProviderKey):
                         note="คีย์ที่ลบแล้วกู้คืนไม่ได้ ถ้าต้องการหยุดใช้ชั่วคราว ให้กดปิดใช้งานแทน")
 
 
-@router.get("/keys/{key_id}/delete")
+@router.get("/keys/{key_id}/delete", dependencies=[Depends(deps.require_permission("key", "delete"))])
 def key_delete_page(request: Request, key_id: Id, session: Session = Depends(get_session)):
     row = session.get(ProviderKey, key_id)
     return _missing(request) if row is None else _key_delete_page(request, row)
 
 
-@router.post("/keys/{key_id}/delete", dependencies=CSRF)
-def key_delete(request: Request, key_id: Id, admin: AdminUser = Depends(deps.require_admin),
+@router.post("/keys/{key_id}/delete", dependencies=[*CSRF, Depends(deps.require_permission("key", "delete"))])
+def key_delete(request: Request, key_id: Id, admin: AdminUser = Depends(deps.require_permission("key", "delete")),
                session: Session = Depends(get_session)):
     row = session.get(ProviderKey, key_id)
     if row is None:
@@ -200,13 +200,13 @@ def _no_store(response):
     return response
 
 
-@router.get("/devices")
+@router.get("/devices", dependencies=[Depends(deps.require_permission("device", "read"))])
 def devices_list(request: Request, page: str = "1", session: Session = Depends(get_session)):
     return _devices_page(request, session, {"label": ""}, {}, page=page)
 
 
-@router.post("/devices", dependencies=CSRF)
-def device_create(request: Request, f: dict = _fields("label", "nonce"), admin: AdminUser = Depends(deps.require_admin),
+@router.post("/devices", dependencies=[*CSRF, Depends(deps.require_permission("device", "create"))])
+def device_create(request: Request, f: dict = _fields("label", "nonce"), admin: AdminUser = Depends(deps.require_permission("device", "create")),
                   session: Session = Depends(get_session)):
     e: dict[str, str] = {}
     label = _text(e, "label", f["label"], "ชื่ออุปกรณ์", LABEL_MAX)
@@ -226,8 +226,8 @@ def device_create(request: Request, f: dict = _fields("label", "nonce"), admin: 
                             session_update={DEVICE_NONCE: None}))
 
 
-@router.post("/devices/{device_id}/revoke", dependencies=CSRF)
-def device_revoke(request: Request, device_id: Id, admin: AdminUser = Depends(deps.require_admin),
+@router.post("/devices/{device_id}/revoke", dependencies=[*CSRF, Depends(deps.require_permission("device", "delete"))])
+def device_revoke(request: Request, device_id: Id, admin: AdminUser = Depends(deps.require_permission("device", "delete")),
                   session: Session = Depends(get_session)):
     row = session.get(DeviceKey, device_id)
     if row is None:
@@ -283,14 +283,14 @@ def _ai_page(request: Request, values: dict, errors: dict, status_code=200):
                   model_now=runtime_config.vision_model())
 
 
-@router.get("/ai")
+@router.get("/ai", dependencies=[Depends(deps.require_permission("key", "read"))])
 def ai_settings(request: Request, session: Session = Depends(get_session)):
     values = {field: runtime_config.get_setting(key, session) or "" for field, key in AI_FIELDS.items()}
     return _ai_page(request, values, {})
 
 
-@router.post("/ai", dependencies=CSRF)
-def ai_settings_save(request: Request, f: dict = _fields(*AI_FIELDS), admin: AdminUser = Depends(deps.require_admin),
+@router.post("/ai", dependencies=[*CSRF, Depends(deps.require_permission("key", "update"))])
+def ai_settings_save(request: Request, f: dict = _fields(*AI_FIELDS), admin: AdminUser = Depends(deps.require_permission("key", "update")),
                      session: Session = Depends(get_session)):
     clean = {k: v.strip() for k, v in f.items()}
     e: dict[str, str] = {}

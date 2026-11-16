@@ -9,6 +9,19 @@ from sqlalchemy.orm import Session
 from app.db import get_session
 from app.models import AdminUser
 from app.web import security
+from app.web.permissions import (
+    ACTION_LABELS,
+    PERMISSIONS,
+    RESOURCE_LABELS,
+    ROLE_BADGE_VARIANTS,
+    ROLE_LABELS,
+    ROLES,
+    PermissionDeniedError,
+    get_role_badge_variant,
+    get_role_label,
+    get_user_role,
+    has_permission,
+)
 
 COOKIE = "nexxa_session"
 MAX_AGE_S = 8 * 60 * 60
@@ -78,6 +91,15 @@ def require_admin(request: Request, session: Session = Depends(get_session)) -> 
         raise HTTPException(303, headers={"Location": "/login?next=" + quote(_return_path(request), safe="/")})
     request.state.admin = admin  # templating.render picks this up
     return admin
+
+
+def require_permission(resource: str, action: str):
+    """FastAPI dependency: require an authenticated user with permission for (resource, action)."""
+    def dependency(request: Request, admin: AdminUser = Depends(require_admin)) -> AdminUser:
+        if not has_permission(admin, resource, action):
+            raise PermissionDeniedError(resource=resource, action=action, user=admin)
+        return admin
+    return dependency
 
 
 async def require_csrf(request: Request) -> None:

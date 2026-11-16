@@ -3,8 +3,10 @@
 {% block title %}คีย์ AI{% endblock %}
 {% block content %}
 {% call c.page_header("คีย์ AI", eyebrow="การวิเคราะห์ภาพ", text="คีย์ของผู้ให้บริการ AI ถูกเข้ารหัสก่อนเก็บ หน้าเว็บแสดงเพียง 4 ตัวท้ายเพื่อให้จำได้ ไม่มีใครดูคีย์เต็มย้อนหลังได้") %}
-  {%- if secrets_on %}{{ c.button("เพิ่มคีย์", href="/admin/keys/new", icon="plus") }}
-  {%- else %}{{ c.button("เพิ่มคีย์", type="button", icon="plus", attrs={"disabled": true, "aria-describedby": "secrets-off"}) }}{% endif %}
+  {%- if not can or can("key", "create") %}
+    {%- if secrets_on %}{{ c.button("เพิ่มคีย์", href="/admin/keys/new", icon="plus") }}
+    {%- else %}{{ c.button("เพิ่มคีย์", type="button", icon="plus", attrs={"disabled": true, "aria-describedby": "secrets-off"}) }}{% endif %}
+  {%- endif %}
 {% endcall %}
 
 {%- if not secrets_on %}
@@ -31,13 +33,17 @@
       {%- else %}{{ c.badge("info", "สำรอง") }}{% endif %}</td>
     <td class="nowrap" data-label="เพิ่มเมื่อ">{{ added(k) }}</td>
     <td data-label="จัดการ"><div class="actions">
+      {%- if not can or can("key", "update") %}
       {%- set toggle = "ปิดใช้งาน" if k.active else "เปิดใช้งาน" %}
       <form class="inline-form" method="post" action="/admin/keys/{{ k.id }}/toggle">{{ c.csrf_field() }}
         {{- c.button(toggle, variant="secondary", size="sm", icon=("neutral" if k.active else "ok"), attrs={"aria-label": toggle ~ " " ~ k.label}) }}</form>
       {%- if secrets_on %}
       {{ c.button("เปลี่ยนคีย์", variant="secondary", size="sm", icon="edit", href="/admin/keys/" ~ k.id ~ "/replace", attrs={"aria-label": "เปลี่ยนคีย์ " ~ k.label}) }}
       {%- endif %}
+      {%- endif %}
+      {%- if not can or can("key", "delete") %}
       {{ c.button("ลบ", variant="danger", size="sm", icon="trash", href="/admin/keys/" ~ k.id ~ "/delete", attrs={"aria-label": "ลบคีย์ " ~ k.label}) }}
+      {%- endif %}
     </div></td>
   </tr>
   {%- endfor %}

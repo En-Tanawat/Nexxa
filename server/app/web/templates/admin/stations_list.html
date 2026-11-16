@@ -3,7 +3,9 @@
 {% block title %}สถานี{% endblock %}
 {% block content %}
 {% call c.page_header("สถานีตรวจ", eyebrow="จัดการข้อมูล", text="สถานีแต่ละจุดผูกกับแท็ก RFID ที่หุ่นยนต์อ่านได้ และผูกกับชนิดผักที่ปลูกอยู่") %}
+  {%- if not can or can("station", "create") %}
   {{ c.button("เพิ่มสถานี", href="/admin/stations/new", icon="plus") }}
+  {%- endif %}
 {% endcall %}
 
 {{ c.search_form("/admin/stations", q, "ค้นหาสถานี", "ชื่อสถานีหรือรหัส RFID") }}
@@ -11,7 +13,7 @@
 {% call c.data_table([("ลำดับ", "num"), "ชื่อสถานี", "RFID", "ชนิดผัก", "สถานะ", "จัดการ"], stations | length, "รายการสถานี",
     empty_title=("ยังไม่มีสถานี" if total == 0 else "ไม่พบสถานีที่ตรงกับคำค้น"),
     empty_text=("เพิ่มสถานีแรกเพื่อให้หุ่นยนต์ส่งภาพเข้าระบบได้" if total == 0 else "ลองค้นด้วยคำอื่น หรือกดล้างการค้นหา"),
-    empty_href=("/admin/stations/new" if total == 0 else none), empty_label="เพิ่มสถานี") %}
+    empty_href=(("/admin/stations/new" if (not can or can("station", "create")) else none) if total == 0 else none), empty_label="เพิ่มสถานี") %}
   {%- for s in stations %}
   <tr>
     <td class="num" data-label="ลำดับ">{{ s.route_order if s.route_order is not none else "-" }}</td>
@@ -20,8 +22,15 @@
     <td data-label="ชนิดผัก">{{ crops.get(s.crop_id, "-") }}</td>
     <td data-label="สถานะ">{% if s.active %}{{ c.badge("ok", "เปิดใช้งาน") }}{% else %}{{ c.badge("neutral", "ปิดใช้งาน") }}{% endif %}</td>
     <td data-label="จัดการ"><div class="actions">
+      {%- if not can or can("station", "update") %}
       {{ c.button("แก้ไข", variant="secondary", size="sm", icon="edit", href="/admin/stations/" ~ s.id ~ "/edit", attrs={"aria-label": "แก้ไข " ~ s.name}) }}
+      {%- endif %}
+      {%- if not can or can("station", "delete") %}
       {{ c.button("ลบ", variant="danger", size="sm", icon="trash", href="/admin/stations/" ~ s.id ~ "/delete", attrs={"aria-label": "ลบ " ~ s.name}) }}
+      {%- endif %}
+      {%- if can and not can("station", "update") and not can("station", "delete") %}
+      <span class="badge badge--neutral">อ่านอย่างเดียว</span>
+      {%- endif %}
     </div></td>
   </tr>
   {%- endfor %}

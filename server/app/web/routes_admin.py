@@ -155,7 +155,7 @@ def _delete_page(request: Request, *, active: str, heading: str, item: str, acti
 
 # --- overview (moved from routes_auth) -------------------------------------------------
 
-@router.get("")
+@router.get("", dependencies=[Depends(deps.require_permission("overview", "read"))])
 def admin_home(request: Request, session: Session = Depends(get_session)):
     count = session.scalar
     stats = {
@@ -223,7 +223,7 @@ def _station_form(request: Request, session: Session, values: dict, errors: dict
                   station_id=station_id, crops=crops)
 
 
-@router.get("/stations")
+@router.get("/stations", dependencies=[Depends(deps.require_permission("station", "read"))])
 def stations_list(request: Request, q: str = "", page: str = "1", session: Session = Depends(get_session)):
     q = q.strip()[:100]
     stmt = select(Station)
@@ -246,12 +246,12 @@ def stations_list(request: Request, q: str = "", page: str = "1", session: Sessi
                   total=total, page=page_num, pages=pages)
 
 
-@router.get("/stations/new")
+@router.get("/stations/new", dependencies=[Depends(deps.require_permission("station", "create"))])
 def station_new(request: Request, session: Session = Depends(get_session)):
     return _station_form(request, session, STATION_DEFAULTS, {}, None)
 
 
-@router.get("/stations/{station_id}/edit")
+@router.get("/stations/{station_id}/edit", dependencies=[Depends(deps.require_permission("station", "update"))])
 def station_edit(request: Request, station_id: Id, session: Session = Depends(get_session)):
     st = session.get(Station, station_id)
     return _missing(request) if st is None else _station_form(request, session, _station_values(st), {}, st.id)
@@ -274,15 +274,15 @@ def _save_station(request: Request, session: Session, admin: AdminUser, f: dict,
     return _station_form(request, session, f, errors, station_id, status_code=422)
 
 
-@router.post("/stations", dependencies=CSRF)
-def station_create(request: Request, f: dict = _fields(*STATION_KEYS), admin: AdminUser = Depends(deps.require_admin),
+@router.post("/stations", dependencies=[*CSRF, Depends(deps.require_permission("station", "create"))])
+def station_create(request: Request, f: dict = _fields(*STATION_KEYS), admin: AdminUser = Depends(deps.require_permission("station", "create")),
                    session: Session = Depends(get_session)):
     return _save_station(request, session, admin, f, None)
 
 
-@router.post("/stations/{station_id}", dependencies=CSRF)
+@router.post("/stations/{station_id}", dependencies=[*CSRF, Depends(deps.require_permission("station", "update"))])
 def station_update(request: Request, station_id: Id, f: dict = _fields(*STATION_KEYS),
-                   admin: AdminUser = Depends(deps.require_admin), session: Session = Depends(get_session)):
+                   admin: AdminUser = Depends(deps.require_permission("station", "update")), session: Session = Depends(get_session)):
     st = session.get(Station, station_id)
     return _missing(request) if st is None else _save_station(request, session, admin, f, st)
 
@@ -303,14 +303,14 @@ def _station_delete_page(request: Request, st: Station, blocked, status_code=200
                         note="การลบถาวรและกู้คืนไม่ได้ ถ้าเพียงต้องการหยุดใช้งานชั่วคราว ให้ปิดใช้งานสถานีแทน")
 
 
-@router.get("/stations/{station_id}/delete")
+@router.get("/stations/{station_id}/delete", dependencies=[Depends(deps.require_permission("station", "delete"))])
 def station_delete_page(request: Request, station_id: Id, session: Session = Depends(get_session)):
     st = session.get(Station, station_id)
     return _missing(request) if st is None else _station_delete_page(request, st, _station_blocked(session, st))
 
 
-@router.post("/stations/{station_id}/delete", dependencies=CSRF)
-def station_delete(request: Request, station_id: Id, admin: AdminUser = Depends(deps.require_admin),
+@router.post("/stations/{station_id}/delete", dependencies=[*CSRF, Depends(deps.require_permission("station", "delete"))])
+def station_delete(request: Request, station_id: Id, admin: AdminUser = Depends(deps.require_permission("station", "delete")),
                    session: Session = Depends(get_session)):
     st = session.get(Station, station_id)
     if st is None:
@@ -356,7 +356,7 @@ def _crop_form(request: Request, values: dict, errors: dict, crop_id: int | None
     return render(request, "admin/crop_form.html", status_code=status_code, values=values, errors=errors, crop_id=crop_id)
 
 
-@router.get("/crops")
+@router.get("/crops", dependencies=[Depends(deps.require_permission("crop", "read"))])
 def crops_list(request: Request, q: str = "", page: str = "1", session: Session = Depends(get_session)):
     q = q.strip()[:100]
     stmt = select(Crop)
@@ -379,12 +379,12 @@ def crops_list(request: Request, q: str = "", page: str = "1", session: Session 
                   total=total, page=page_num, pages=pages)
 
 
-@router.get("/crops/new")
+@router.get("/crops/new", dependencies=[Depends(deps.require_permission("crop", "create"))])
 def crop_new(request: Request):
     return _crop_form(request, {"name": "", "labels": "", "prompt": "", "notes": ""}, {}, None)
 
 
-@router.get("/crops/{crop_id}/edit")
+@router.get("/crops/{crop_id}/edit", dependencies=[Depends(deps.require_permission("crop", "update"))])
 def crop_edit(request: Request, crop_id: Id, session: Session = Depends(get_session)):
     crop = session.get(Crop, crop_id)
     return _missing(request) if crop is None else _crop_form(request, _crop_values(crop), {}, crop.id)
@@ -407,15 +407,15 @@ def _save_crop(request: Request, session: Session, admin: AdminUser, f: dict, cr
     return _crop_form(request, f, errors, crop_id, status_code=422)
 
 
-@router.post("/crops", dependencies=CSRF)
-def crop_create(request: Request, f: dict = _fields(*CROP_KEYS), admin: AdminUser = Depends(deps.require_admin),
+@router.post("/crops", dependencies=[*CSRF, Depends(deps.require_permission("crop", "create"))])
+def crop_create(request: Request, f: dict = _fields(*CROP_KEYS), admin: AdminUser = Depends(deps.require_permission("crop", "create")),
                 session: Session = Depends(get_session)):
     return _save_crop(request, session, admin, f, None)
 
 
-@router.post("/crops/{crop_id}", dependencies=CSRF)
+@router.post("/crops/{crop_id}", dependencies=[*CSRF, Depends(deps.require_permission("crop", "update"))])
 def crop_update(request: Request, crop_id: Id, f: dict = _fields(*CROP_KEYS),
-                admin: AdminUser = Depends(deps.require_admin), session: Session = Depends(get_session)):
+                admin: AdminUser = Depends(deps.require_permission("crop", "update")), session: Session = Depends(get_session)):
     crop = session.get(Crop, crop_id)
     return _missing(request) if crop is None else _save_crop(request, session, admin, f, crop)
 
@@ -436,14 +436,14 @@ def _crop_delete_page(request: Request, crop: Crop, blocked, status_code=200):
                         back="/admin/crops", blocked=blocked, status_code=status_code, note="การลบถาวรและกู้คืนไม่ได้")
 
 
-@router.get("/crops/{crop_id}/delete")
+@router.get("/crops/{crop_id}/delete", dependencies=[Depends(deps.require_permission("crop", "delete"))])
 def crop_delete_page(request: Request, crop_id: Id, session: Session = Depends(get_session)):
     crop = session.get(Crop, crop_id)
     return _missing(request) if crop is None else _crop_delete_page(request, crop, _crop_blocked(session, crop))
 
 
-@router.post("/crops/{crop_id}/delete", dependencies=CSRF)
-def crop_delete(request: Request, crop_id: Id, admin: AdminUser = Depends(deps.require_admin),
+@router.post("/crops/{crop_id}/delete", dependencies=[*CSRF, Depends(deps.require_permission("crop", "delete"))])
+def crop_delete(request: Request, crop_id: Id, admin: AdminUser = Depends(deps.require_permission("crop", "delete")),
                 session: Session = Depends(get_session)):
     crop = session.get(Crop, crop_id)
     if crop is None:
@@ -492,7 +492,7 @@ def _batch_form(request: Request, session: Session, values: dict, errors: dict, 
                   batch_id=batch_id, stations=stations, crops=crops)
 
 
-@router.get("/batches")
+@router.get("/batches", dependencies=[Depends(deps.require_permission("batch", "read"))])
 def batches_list(request: Request, q: str = "", page: str = "1", session: Session = Depends(get_session)):
     q = q.strip()[:100]
     base_stmt = (select(Batch, Station.name, Crop.name).join(Station, Batch.station_id == Station.id)
@@ -517,13 +517,13 @@ def batches_list(request: Request, q: str = "", page: str = "1", session: Sessio
     return render(request, "admin/batches_list.html", rows=rows, q=q, total=total, page=page_num, pages=pages)
 
 
-@router.get("/batches/new")
+@router.get("/batches/new", dependencies=[Depends(deps.require_permission("batch", "create"))])
 def batch_new(request: Request, session: Session = Depends(get_session)):
     return _batch_form(request, session, {"station_id": "", "crop_id": "", "planted_on": date.today().isoformat(),
                                           "harvested_on": "", "notes": ""}, {}, None)
 
 
-@router.get("/batches/{batch_id}/edit")
+@router.get("/batches/{batch_id}/edit", dependencies=[Depends(deps.require_permission("batch", "update"))])
 def batch_edit(request: Request, batch_id: Id, session: Session = Depends(get_session)):
     b = session.get(Batch, batch_id)
     return _missing(request) if b is None else _batch_form(request, session, _batch_values(b), {}, b.id)
@@ -545,15 +545,15 @@ def _save_batch(request: Request, session: Session, admin: AdminUser, f: dict, b
     return _batch_form(request, session, f, errors, batch_id, status_code=422)
 
 
-@router.post("/batches", dependencies=CSRF)
-def batch_create(request: Request, f: dict = _fields(*BATCH_KEYS), admin: AdminUser = Depends(deps.require_admin),
+@router.post("/batches", dependencies=[*CSRF, Depends(deps.require_permission("batch", "create"))])
+def batch_create(request: Request, f: dict = _fields(*BATCH_KEYS), admin: AdminUser = Depends(deps.require_permission("batch", "create")),
                  session: Session = Depends(get_session)):
     return _save_batch(request, session, admin, f, None)
 
 
-@router.post("/batches/{batch_id}", dependencies=CSRF)
+@router.post("/batches/{batch_id}", dependencies=[*CSRF, Depends(deps.require_permission("batch", "update"))])
 def batch_update(request: Request, batch_id: Id, f: dict = _fields(*BATCH_KEYS),
-                 admin: AdminUser = Depends(deps.require_admin), session: Session = Depends(get_session)):
+                 admin: AdminUser = Depends(deps.require_permission("batch", "update")), session: Session = Depends(get_session)):
     b = session.get(Batch, batch_id)
     return _missing(request) if b is None else _save_batch(request, session, admin, f, b)
 
@@ -572,14 +572,14 @@ def _batch_delete_page(request: Request, b: Batch, session: Session, blocked, st
                         status_code=status_code, note="การลบถาวรและกู้คืนไม่ได้")
 
 
-@router.get("/batches/{batch_id}/delete")
+@router.get("/batches/{batch_id}/delete", dependencies=[Depends(deps.require_permission("batch", "delete"))])
 def batch_delete_page(request: Request, batch_id: Id, session: Session = Depends(get_session)):
     b = session.get(Batch, batch_id)
     return _missing(request) if b is None else _batch_delete_page(request, b, session, _batch_blocked(session, b))
 
 
-@router.post("/batches/{batch_id}/delete", dependencies=CSRF)
-def batch_delete(request: Request, batch_id: Id, admin: AdminUser = Depends(deps.require_admin),
+@router.post("/batches/{batch_id}/delete", dependencies=[*CSRF, Depends(deps.require_permission("batch", "delete"))])
+def batch_delete(request: Request, batch_id: Id, admin: AdminUser = Depends(deps.require_permission("batch", "delete")),
                  session: Session = Depends(get_session)):
     b = session.get(Batch, batch_id)
     if b is None:
@@ -605,17 +605,27 @@ def _password_errors(errors: dict, password: str, password2: str) -> None:
 
 def _users_page(request: Request, session: Session, values: dict, errors: dict, status_code=200):
     users = session.scalars(select(AdminUser).order_by(AdminUser.id)).all()
-    return render(request, "admin/users_list.html", status_code=status_code, users=users, values=values, errors=errors)
+    roles = [
+        ("admin", "ผู้ดูแลระบบ (Admin)"),
+        ("agent", "เจ้าหน้าที่ (Agent)"),
+        ("viewer", "ผู้เข้าชม (Viewer)"),
+    ]
+    vals = dict(values)
+    vals.setdefault("role", "admin")
+    return render(
+        request, "admin/users_list.html", status_code=status_code,
+        users=users, values=vals, errors=errors, roles=roles,
+    )
 
 
-@router.get("/users")
+@router.get("/users", dependencies=[Depends(deps.require_permission("user", "read"))])
 def users_list(request: Request, session: Session = Depends(get_session)):
     return _users_page(request, session, {"username": ""}, {})
 
 
-@router.post("/users", dependencies=CSRF)
-def user_create(request: Request, f: dict = _fields("username", "password", "password2"),
-                admin: AdminUser = Depends(deps.require_admin), session: Session = Depends(get_session)):
+@router.post("/users", dependencies=[*CSRF, Depends(deps.require_permission("user", "create"))])
+def user_create(request: Request, f: dict = _fields("username", "password", "password2", "role"),
+                admin: AdminUser = Depends(deps.require_permission("user", "create")), session: Session = Depends(get_session)):
     e: dict[str, str] = {}
     username = _text(e, "username", f["username"], "ชื่อผู้ใช้", USERNAME_MAX)
     if username and "username" not in e:
@@ -624,8 +634,12 @@ def user_create(request: Request, f: dict = _fields("username", "password", "pas
         elif session.scalar(select(AdminUser.id).where(AdminUser.username == username)):
             e["username"] = "ชื่อผู้ใช้นี้ถูกใช้แล้ว"
     _password_errors(e, f["password"], f["password2"])
+    raw_role = f.get("role", "")
+    role = raw_role.strip().lower() if raw_role else "admin"
+    if role not in ("admin", "agent", "viewer"):
+        e["role"] = "กรุณาเลือกบทบาทที่ถูกต้อง (admin, agent หรือ viewer)"
     if not e:
-        user = AdminUser(username=username, password_hash=security.hash_password(f["password"]))
+        user = AdminUser(username=username, password_hash=security.hash_password(f["password"]), role=role)
         session.add(user)
         try:
             session.flush()
@@ -633,25 +647,25 @@ def user_create(request: Request, f: dict = _fields("username", "password", "pas
             session.rollback()
             e["username"] = "ชื่อผู้ใช้นี้ถูกใช้แล้ว"
         else:
-            audit.record(session, admin.username, "user.create", f"user#{user.id} {username}")
+            audit.record(session, admin.username, "user.create", f"user#{user.id} {username} ({role})")
             session.commit()
-            return _done(request, "/admin/users", f"สร้างผู้ดูแลแล้ว: {username}")
-    return _users_page(request, session, {"username": f["username"]}, e, status_code=422)  # passwords are never echoed
+            return _done(request, "/admin/users", f"สร้างผู้ดูแลแล้ว: {username} ({deps.get_role_label(role)})")
+    return _users_page(request, session, {"username": f["username"], "role": role}, e, status_code=422)  # passwords are never echoed
 
 
 def _password_page(request: Request, user: AdminUser, errors: dict, status_code=200):
     return render(request, "admin/user_password.html", status_code=status_code, user=user, errors=errors)
 
 
-@router.get("/users/{user_id}/password")
+@router.get("/users/{user_id}/password", dependencies=[Depends(deps.require_permission("user", "update"))])
 def user_password_page(request: Request, user_id: Id, session: Session = Depends(get_session)):
     user = session.get(AdminUser, user_id)
     return _missing(request) if user is None else _password_page(request, user, {})
 
 
-@router.post("/users/{user_id}/password", dependencies=CSRF)
+@router.post("/users/{user_id}/password", dependencies=[*CSRF, Depends(deps.require_permission("user", "update"))])
 def user_password(request: Request, user_id: Id, f: dict = _fields("password", "password2"),
-                  admin: AdminUser = Depends(deps.require_admin), session: Session = Depends(get_session)):
+                  admin: AdminUser = Depends(deps.require_permission("user", "update")), session: Session = Depends(get_session)):
     user = session.get(AdminUser, user_id)
     if user is None:
         return _missing(request)
@@ -665,8 +679,18 @@ def user_password(request: Request, user_id: Id, f: dict = _fields("password", "
     return _done(request, "/admin/users", f"เปลี่ยนรหัสผ่านของ {user.username} แล้ว")
 
 
-def _user_blocked(session: Session):
-    if _count(session, AdminUser.id) <= 1:
+def _user_blocked(session: Session, user: AdminUser):
+    if user.role == "admin":
+        admin_count = session.scalar(
+            select(func.count(AdminUser.id)).where(AdminUser.role == "admin")
+        ) or 0
+        if admin_count <= 1:
+            return (
+                "นี่คือผู้ดูแลคนสุดท้ายของระบบ ลบไม่ได้ ไม่เช่นนั้นจะไม่มีใครเข้าสู่ระบบได้ กรุณาสร้างผู้ดูแลคนใหม่ก่อน",
+                "/admin/users",
+                "ไปที่ผู้ดูแล",
+            )
+    elif _count(session, AdminUser.id) <= 1:
         return ("นี่คือผู้ดูแลคนสุดท้ายของระบบ ลบไม่ได้ ไม่เช่นนั้นจะไม่มีใครเข้าสู่ระบบได้ กรุณาสร้างผู้ดูแลคนใหม่ก่อน",
                 "/admin/users", "ไปที่ผู้ดูแล")
     return None
@@ -678,20 +702,20 @@ def _user_delete_page(request: Request, user: AdminUser, blocked, me: AdminUser,
                         back="/admin/users", blocked=blocked, status_code=status_code, note=note)
 
 
-@router.get("/users/{user_id}/delete")
-def user_delete_page(request: Request, user_id: Id, admin: AdminUser = Depends(deps.require_admin),
+@router.get("/users/{user_id}/delete", dependencies=[Depends(deps.require_permission("user", "delete"))])
+def user_delete_page(request: Request, user_id: Id, admin: AdminUser = Depends(deps.require_permission("user", "delete")),
                      session: Session = Depends(get_session)):
     user = session.get(AdminUser, user_id)
-    return _missing(request) if user is None else _user_delete_page(request, user, _user_blocked(session), admin)
+    return _missing(request) if user is None else _user_delete_page(request, user, _user_blocked(session, user), admin)
 
 
-@router.post("/users/{user_id}/delete", dependencies=CSRF)
-def user_delete(request: Request, user_id: Id, admin: AdminUser = Depends(deps.require_admin),
+@router.post("/users/{user_id}/delete", dependencies=[*CSRF, Depends(deps.require_permission("user", "delete"))])
+def user_delete(request: Request, user_id: Id, admin: AdminUser = Depends(deps.require_permission("user", "delete")),
                 session: Session = Depends(get_session)):
     user = session.get(AdminUser, user_id)
     if user is None:
         return _missing(request)
-    if blocked := _user_blocked(session):
+    if blocked := _user_blocked(session, user):
         return _user_delete_page(request, user, blocked, admin, status_code=409)
     name, was_me = user.username, user.id == admin.id
     audit.record(session, admin.username, "user.delete", f"user#{user.id} {name}")
@@ -711,7 +735,7 @@ def _thai_time(dt) -> str:
     return (dt + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S") if dt else "-"
 
 
-@router.get("/audit")
+@router.get("/audit", dependencies=[Depends(deps.require_permission("audit", "read"))])
 def audit_list(request: Request, page: str = "1", session: Session = Depends(get_session)):
     total = _count(session, AuditLog.id)
     pages = max(1, math.ceil(total / PAGE_SIZE))
@@ -727,7 +751,7 @@ def audit_list(request: Request, page: str = "1", session: Session = Depends(get
 
 # --- robot status & monitor --------------------------------------------------------
 
-@router.get("/robot")
+@router.get("/robot", dependencies=[Depends(deps.require_permission("robot", "read"))])
 def robot_page(request: Request, session: Session = Depends(get_session)):
     status = robot_monitor.get_robot_status(session)
     now = time.time()
@@ -744,10 +768,10 @@ def robot_page(request: Request, session: Session = Depends(get_session)):
     )
 
 
-@router.post("/robot/simulate", dependencies=CSRF)
+@router.post("/robot/simulate", dependencies=[*CSRF, Depends(deps.require_permission("robot", "update"))])
 def robot_simulate(
     request: Request,
-    admin: AdminUser = Depends(deps.require_admin),
+    admin: AdminUser = Depends(deps.require_permission("robot", "update")),
     session: Session = Depends(get_session),
 ):
     first_st = session.scalars(select(Station).where(Station.kind != "home", Station.active).order_by(Station.route_order)).first()
@@ -766,10 +790,10 @@ def robot_simulate(
     return _done(request, "/admin/robot", "จำลองส่งข้อมูลสถานะหุ่นยนต์เรียบร้อยแล้ว")
 
 
-@router.post("/robot/reset", dependencies=CSRF)
+@router.post("/robot/reset", dependencies=[*CSRF, Depends(deps.require_permission("robot", "update"))])
 def robot_reset(
     request: Request,
-    admin: AdminUser = Depends(deps.require_admin),
+    admin: AdminUser = Depends(deps.require_permission("robot", "update")),
     session: Session = Depends(get_session),
 ):
     robot_monitor.reset()
@@ -783,7 +807,7 @@ def robot_reset(
 SETTING_KEYS = ("robot_stream_url", "robot_name", "greenhouse_name", "greenhouse_location", "alert_email")
 
 
-@router.get("/settings")
+@router.get("/settings", dependencies=[Depends(deps.require_permission("setting", "read"))])
 def settings_page(request: Request, session: Session = Depends(get_session)):
     settings_rows = session.scalars(select(AppSetting).where(AppSetting.key.in_(SETTING_KEYS))).all()
     stored = {row.key: row.value for row in settings_rows}
@@ -806,11 +830,11 @@ def settings_page(request: Request, session: Session = Depends(get_session)):
     return render(request, "admin/settings.html", values=values, errors={}, sys_stats=sys_stats)
 
 
-@router.post("/settings", dependencies=CSRF)
+@router.post("/settings", dependencies=[*CSRF, Depends(deps.require_permission("setting", "update"))])
 def settings_save(
     request: Request,
     f: dict = _fields(*SETTING_KEYS),
-    admin: AdminUser = Depends(deps.require_admin),
+    admin: AdminUser = Depends(deps.require_permission("setting", "update")),
     session: Session = Depends(get_session),
 ):
     e: dict[str, str] = {}
@@ -857,10 +881,10 @@ def settings_save(
     return _done(request, "/admin/settings", "บันทึกการตั้งค่าระบบแล้ว")
 
 
-@router.post("/settings/seed-demo", dependencies=CSRF)
+@router.post("/settings/seed-demo", dependencies=[*CSRF, Depends(deps.require_permission("setting", "update"))])
 def settings_seed_demo(
     request: Request,
-    admin: AdminUser = Depends(deps.require_admin),
+    admin: AdminUser = Depends(deps.require_permission("setting", "update")),
     session: Session = Depends(get_session),
 ):
     try:
@@ -873,10 +897,10 @@ def settings_seed_demo(
         return _done(request, "/admin/settings", f"เกิดข้อผิดพลาดในการสร้างข้อมูล: {ex}")
 
 
-@router.post("/settings/clear-demo", dependencies=CSRF)
+@router.post("/settings/clear-demo", dependencies=[*CSRF, Depends(deps.require_permission("setting", "delete"))])
 def settings_clear_demo(
     request: Request,
-    admin: AdminUser = Depends(deps.require_admin),
+    admin: AdminUser = Depends(deps.require_permission("setting", "delete")),
     session: Session = Depends(get_session),
 ):
     try:

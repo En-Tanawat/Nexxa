@@ -109,6 +109,7 @@ app.include_router(routes_keys.router)
 app.include_router(routes_public_api.router)
 app.include_router(routes_public.router)
 app.add_exception_handler(deps.CsrfError, routes_auth.csrf_error_page)
+app.add_exception_handler(deps.PermissionDeniedError, routes_auth.permission_error_page)
 
 
 def require_device_key(x_device_key: str | None = Header(None), session: Session = Depends(get_session)) -> None:

@@ -40,18 +40,22 @@
       คุณสามารถสร้างข้อมูลการตรวจรอบและภาพจำลอง 4 มุมย้อนหลัง 100 วัน เพื่อดูสถิติ กราฟแนวโน้ม และการจำลอง 3D Twin หรือล้างข้อมูลทั้งหมดเมื่อต้องการเริ่มต้นใหม่
     </p>
     <div class="actions">
+      {%- if not can or can("setting", "update") %}
       <form method="post" action="/admin/settings/seed-demo" data-busy-form>
         {{ c.csrf_field() }}
         <button type="submit" class="btn btn--secondary btn--sm">
           {{ c.icon("refresh", 16) }} <span>สร้างข้อมูลจำลอง 100 วัน</span>
         </button>
       </form>
+      {%- endif %}
+      {%- if not can or can("setting", "delete") %}
       <form method="post" action="/admin/settings/clear-demo" data-busy-form data-confirm="ยืนยันที่จะล้างข้อมูลจำลองทั้งหมดหรือไม่?">
         {{ c.csrf_field() }}
         <button type="submit" class="btn btn--neutral btn--sm">
           {{ c.icon("trash", 16) }} <span>ล้างข้อมูลจำลอง</span>
         </button>
       </form>
+      {%- endif %}
     </div>
     {% endcall %}
 

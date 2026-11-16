@@ -4,20 +4,26 @@
 {% block content %}
 {{ c.page_header("ผู้ดูแลระบบ", eyebrow="ความปลอดภัย", text="บัญชีที่เข้าสู่แผงผู้ดูแลได้ ควรมีอย่างน้อยหนึ่งบัญชีเสมอ") }}
 
-{% call c.data_table(["ชื่อผู้ใช้", "สร้างเมื่อ", "เข้าสู่ระบบล่าสุด", "จัดการ"], users | length, "รายการผู้ดูแล") %}
+{% call c.data_table(["ชื่อผู้ใช้", "บทบาท", "สร้างเมื่อ", "เข้าสู่ระบบล่าสุด", "จัดการ"], users | length, "รายการผู้ดูแล") %}
   {%- for u in users %}
   <tr>
     <td data-label="ชื่อผู้ใช้"><strong>{{ u.username }}</strong>{% if admin and u.id == admin.id %} {{ c.badge("info", "บัญชีของคุณ") }}{% endif %}</td>
+    <td data-label="บทบาท">{{ c.badge(get_role_badge(u.role or "admin"), get_role_label(u.role or "admin")) }}</td>
     <td data-label="สร้างเมื่อ">{{ u.created_at.strftime("%Y-%m-%d") if u.created_at else "-" }}</td>
     <td data-label="เข้าสู่ระบบล่าสุด">{{ u.last_login_at.strftime("%Y-%m-%d %H:%M") if u.last_login_at else "ยังไม่เคย" }}</td>
     <td data-label="จัดการ"><div class="actions">
+      {%- if not can or can("user", "update") %}
       {{ c.button("เปลี่ยนรหัสผ่าน", variant="secondary", size="sm", icon="lock", href="/admin/users/" ~ u.id ~ "/password", attrs={"aria-label": "เปลี่ยนรหัสผ่านของ " ~ u.username}) }}
+      {%- endif %}
+      {%- if not can or can("user", "delete") %}
       {{ c.button("ลบ", variant="danger", size="sm", icon="trash", href="/admin/users/" ~ u.id ~ "/delete", attrs={"aria-label": "ลบ " ~ u.username}) }}
+      {%- endif %}
     </div></td>
   </tr>
   {%- endfor %}
 {% endcall %}
 
+{%- if not can or can("user", "create") %}
 {%- if errors %}{{ c.alert("danger", "มี " ~ errors | length ~ " ช่องที่ต้องแก้ไข ดูข้อความสีแดงใต้แต่ละช่อง", title="สร้างผู้ดูแลไม่สำเร็จ", role="alert") }}{% endif %}
 <form class="form" method="post" action="/admin/users" data-busy-form>
   {{ c.csrf_field() }}
@@ -25,11 +31,12 @@
   <div class="form-grid">
     {{ c.field("username", "ชื่อผู้ใช้", value=values["username"], error=errors.get("username"), required=true, autocomplete="off",
                help="3-64 ตัวอักษร", attrs={"maxlength": 64, "autocapitalize": "none", "spellcheck": "false"}) }}
-    <div></div>
+    {{ c.select("role", "บทบาท (Role)", roles, value=values["role"], error=errors.get("role"), help="admin = เต็มสิทธิ์, agent = ดูแลแปลง/หุ่นยนต์, viewer = อ่านอย่างเดียว") }}
     {{ c.password_field("password", "รหัสผ่านใหม่", error=errors.get("password"), autocomplete="new-password", help="อย่างน้อย 10 ตัวอักษร") }}
     {{ c.password_field("password2", "ยืนยันรหัสผ่าน", error=errors.get("password2"), autocomplete="new-password") }}
   </div>
   <div class="form-actions">{{ c.button("สร้างผู้ดูแล", icon="plus") }}</div>
   {% endcall %}
 </form>
+{%- endif %}
 {% endblock %}

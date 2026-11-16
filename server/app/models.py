@@ -116,6 +116,7 @@ class AdminUser(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     username: Mapped[str] = mapped_column(String, unique=True)
     password_hash: Mapped[str]
+    role: Mapped[str] = mapped_column(String, default="admin")
     created_at: Mapped[datetime] = mapped_column(default=_now)
     last_login_at: Mapped[datetime | None]
 

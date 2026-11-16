@@ -91,3 +91,11 @@ async def csrf_error_page(request: Request, exc: deps.CsrfError):
     if request.url.path.startswith("/api/"):
         return JSONResponse({"detail": exc.detail}, status_code=403)
     return render(request, "error.html", status_code=403, title="แบบฟอร์มหมดอายุ", message=exc.detail)
+
+
+async def permission_error_page(request: Request, exc: deps.PermissionDeniedError):
+    """Registered in main.py: a friendly Thai 403 page for unauthorized actions, JSON for /api/."""
+    if request.url.path.startswith("/api/"):
+        return JSONResponse({"detail": exc.detail}, status_code=403)
+    return render(request, "error.html", status_code=403, title="ไม่มีสิทธิ์ดำเนินการ (403 Forbidden)", message=exc.detail)
+

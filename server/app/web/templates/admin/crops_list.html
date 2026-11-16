@@ -3,7 +3,9 @@
 {% block title %}ชนิดผัก{% endblock %}
 {% block content %}
 {% call c.page_header("ชนิดผัก", eyebrow="จัดการข้อมูล", text="กำหนดป้ายกำกับและคำสั่งที่ AI ใช้จัดประเภทใบผักของแต่ละชนิด") %}
+  {%- if not can or can("crop", "create") %}
   {{ c.button("เพิ่มชนิดผัก", href="/admin/crops/new", icon="plus") }}
+  {%- endif %}
 {% endcall %}
 
 {{ c.search_form("/admin/crops", q, "ค้นหาชนิดผัก", "ชื่อชนิดผัก") }}
@@ -11,15 +13,22 @@
 {% call c.data_table(["ชนิดผัก", "ป้ายกำกับ", ("ใช้ในสถานี", "num"), "จัดการ"], crops | length, "รายการชนิดผัก",
     empty_title=("ยังไม่มีชนิดผัก" if total == 0 else "ไม่พบชนิดผักที่ตรงกับคำค้น"),
     empty_text=("เพิ่มชนิดผักก่อน เพื่อใช้กับสถานีและล็อตผัก" if total == 0 else "ลองค้นด้วยคำอื่น หรือกดล้างการค้นหา"),
-    empty_href=("/admin/crops/new" if total == 0 else none), empty_label="เพิ่มชนิดผัก") %}
+    empty_href=(("/admin/crops/new" if (not can or can("crop", "create")) else none) if total == 0 else none), empty_label="เพิ่มชนิดผัก") %}
   {%- for crop in crops %}
   <tr>
     <td data-label="ชนิดผัก"><strong>{{ crop.name }}</strong></td>
     <td class="cell-wrap" data-label="ป้ายกำกับ">{{ crop.labels | join(", ") }}</td>
     <td class="num" data-label="ใช้ในสถานี">{{ used.get(crop.id, 0) }}</td>
     <td data-label="จัดการ"><div class="actions">
+      {%- if not can or can("crop", "update") %}
       {{ c.button("แก้ไข", variant="secondary", size="sm", icon="edit", href="/admin/crops/" ~ crop.id ~ "/edit", attrs={"aria-label": "แก้ไข " ~ crop.name}) }}
+      {%- endif %}
+      {%- if not can or can("crop", "delete") %}
       {{ c.button("ลบ", variant="danger", size="sm", icon="trash", href="/admin/crops/" ~ crop.id ~ "/delete", attrs={"aria-label": "ลบ " ~ crop.name}) }}
+      {%- endif %}
+      {%- if can and not can("crop", "update") and not can("crop", "delete") %}
+      <span class="badge badge--neutral">อ่านอย่างเดียว</span>
+      {%- endif %}
     </div></td>
   </tr>
   {%- endfor %}

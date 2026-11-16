@@ -83,9 +83,11 @@
           <div class="robot-cam-fallback__icon">{{ c.icon("camera", 32) }}</div>
           <p class="robot-cam-fallback__title">ยังไม่ได้กำหนด URL สตรีมกล้อง</p>
           <p class="robot-cam-fallback__text">กำหนด URL สตรีมของ ESP32 ได้ที่หน้าตั้งค่าระบบ</p>
+          {%- if not can or can("setting", "read") %}
           <div class="actions">
             <a href="/admin/settings" class="btn btn--secondary btn--sm">{{ c.icon("settings", 16) }} <span>ไปที่หน้าตั้งค่า</span></a>
           </div>
+          {%- endif %}
         </div>
         {%- endif %}
         
@@ -136,6 +138,7 @@
         คุณสามารถทดสอบส่งข้อมูลสถานะจำลอง (Simulate Telemetry) หรือรีเซ็ตสถานะมอนิเตอร์เพื่อตรวจสอบการแสดงผลบนหน้าจอ
       </p>
       <div class="actions">
+        {%- if not can or can("robot", "update") %}
         <form method="post" action="/admin/robot/simulate" data-busy-form>
           {{ c.csrf_field() }}
           <button type="submit" class="btn btn--secondary btn--sm">
@@ -148,9 +151,12 @@
             {{ c.icon("trash", 16) }} <span>รีเซ็ตสถานะ</span>
           </button>
         </form>
+        {%- endif %}
+        {%- if not can or can("device", "read") %}
         <a href="/admin/devices" class="btn btn--secondary btn--sm">
           {{ c.icon("device", 16) }} <span>จัดการ Device Key</span>
         </a>
+        {%- endif %}
       </div>
       {% endcall %}
     </div>
