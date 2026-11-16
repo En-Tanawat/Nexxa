@@ -59,6 +59,8 @@ class Capture(Base):
 
 class Analysis(Base):
     __tablename__ = "analyses"
+    # existing DBs: CREATE INDEX ix_analyses_capture ON analyses(capture_id)
+    __table_args__ = (Index("ix_analyses_capture", "capture_id"),)
     id: Mapped[int] = mapped_column(primary_key=True)
     capture_id: Mapped[int] = mapped_column(ForeignKey("captures.id"))
     label: Mapped[str | None]  # None for refusals / invalid answers

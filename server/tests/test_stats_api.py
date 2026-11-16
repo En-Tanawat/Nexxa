@@ -1,10 +1,12 @@
 import json
 import re
+import threading
+from types import SimpleNamespace
 from datetime import date, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event, func, select
+from sqlalchemy import create_engine, event, func, inspect, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -175,6 +177,7 @@ def test_empty_database_gives_valid_empty_structures(client):
     assert s.status_code == 200
     body = s.json()
     assert body["stations_active"] == 0 and body["captures_today"] == 0 and body["lots_near_harvest"] == []
+    assert body["harvest_cycle_days_assumed"] == 45
     assert body["review_pending"] == 0 and body["demo"] is False and body["abnormal_rate_today"] is None
     assert body["updated_at"]
     t = client.get("/api/public/trends").json()
@@ -342,7 +345,12 @@ def test_twin_status_rules(client, eng, monkeypatch):
         "id", "name", "crop", "map_x", "map_y", "route_order", "status", "age_days", "last_seen_at", "confidence"]
 
 
-def test_nothing_secret_leaks(client, eng, monkeypatch):
+BAD_NAMES = re.compile(r"image|path|password|key|uid|note|secret|hash|username|rfid", re.I)
+FORBIDDEN = ("SECRET", "secret", "img.jpg", "4821", "SECRET-UID-123", "secret-admin-789", "Traceback", "sqlalchemy",
+             "select ", "from captures", ".py", "\\")
+
+
+def seed_secrets(eng, monkeypatch):
     today = date(2026, 3, 20)
     monkeypatch.setattr(stats, "today", lambda: today)
     crop, s1, s2 = seed_basic(eng)
@@ -353,27 +361,55 @@ def test_nothing_secret_leaks(client, eng, monkeypatch):
         c = cap(s, s1, today, 8, True, NORMAL, 0.9, review=True, note="SECRET-NOTE-456")
         c.image_path = "/secret/path/img.jpg"
         s.add(AdminUser(username="secret-admin-789", password_hash="SECRET-HASH-1"))
-        s.add(ProviderKey(provider="anthropic", label="SECRET-LABEL", secret_enc=b"SECRET-KEY-BYTES", last4="9999"))
+        s.add(ProviderKey(provider="anthropic", label="SECRET-LABEL", secret_enc=b"SECRET-KEY-BYTES", last4="4821"))
         s.commit()
         stats.rollup(s)
-    bad_names = re.compile(r"image|path|password|key|uid|note|secret|hash|username|rfid", re.I)
+    return s1
 
-    def names(o):
-        if isinstance(o, dict):
-            for k, v in o.items():
-                yield k
-                yield from names(v)
-        elif isinstance(o, list):
-            for v in o:
-                yield from names(v)
 
+def names(o):
+    if isinstance(o, dict):
+        for k, v in o.items():
+            yield k
+            yield from names(v)
+    elif isinstance(o, list):
+        for v in o:
+            yield from names(v)
+
+
+def test_nothing_secret_leaks(client, eng, monkeypatch):
+    s1 = seed_secrets(eng, monkeypatch)
     for p in PUBLIC + ["/api/public/trends?days=365", f"/api/public/trends?station_id={s1}"]:
         r = client.get(p)
         assert r.status_code == 200
         dump = json.dumps(r.json(), ensure_ascii=False)
-        for secret in ("SECRET", "secret", "img.jpg", "9999", "SECRET-UID-123", "secret-admin-789"):
+        for secret in FORBIDDEN[:6]:
             assert secret not in dump, (p, secret)
-        assert not [n for n in names(r.json()) if bad_names.search(n)], p
+        assert not [n for n in names(r.json()) if BAD_NAMES.search(n)], p
+
+
+def test_nothing_secret_leaks_in_error_bodies(client, eng, monkeypatch):
+    seed_secrets(eng, monkeypatch)
+    monkeypatch.setattr(routes_public_api, "RATE_LIMIT", 10)
+    errors = [
+        ("get", "/api/public/trends?days=0", 422), ("get", "/api/public/trends?days=abc", 422),
+        ("get", "/api/public/trends?station_id=0", 422), ("get", "/api/public/trends?station_id=99999999999", 422),
+        ("post", "/api/public/summary", 405), ("delete", "/api/public/twin", 405), ("get", "/api/public/x", 404),
+    ]
+    for method, path, code in errors:
+        r = getattr(client, method)(path)
+        assert r.status_code == code, (path, r.status_code)
+        assert "public" not in r.headers.get("cache-control", ""), path
+        low = r.text.lower()
+        for bad in FORBIDDEN:
+            assert bad.lower() not in low, (path, bad)
+    monkeypatch.setattr(routes_public_api, "RATE_LIMIT", 1)
+    client.get("/api/public/twin")
+    r = client.get("/api/public/twin")
+    assert r.status_code == 429
+    assert "public" not in r.headers.get("cache-control", "")
+    for bad in FORBIDDEN:
+        assert bad.lower() not in r.text.lower()
 
 
 def test_rate_limit_429_and_window_reset(client, monkeypatch):
@@ -452,3 +488,185 @@ def test_startup_catchup_runs_and_never_blocks_startup(eng, monkeypatch, caplog)
     with TestClient(main.app) as c:  # must still start
         assert c.get("/api/public/twin").status_code == 200
     assert "RuntimeError" in caplog.text and "SECRET-DETAIL-xyz" not in caplog.text
+
+
+# ---------- fix round 1 ----------
+
+def test_rate_limiter_threadsafe_and_bounded(monkeypatch):
+    monkeypatch.setattr(routes_public_api, "_hits", {})
+    monkeypatch.setattr(routes_public_api, "MAX_TRACKED_IPS", 50)
+    errors = []
+
+    def hammer(n):
+        try:
+            for i in range(400):
+                routes_public_api.allow(f"10.{n}.{i // 250}.{i % 250}")
+        except Exception as e:  # e.g. "dictionary changed size during iteration"
+            errors.append(e)
+
+    old = __import__("sys").getswitchinterval()
+    __import__("sys").setswitchinterval(1e-6)
+    try:
+        threads = [threading.Thread(target=hammer, args=(n,)) for n in range(8)]
+        [t.start() for t in threads]
+        [t.join() for t in threads]
+    finally:
+        __import__("sys").setswitchinterval(old)
+    assert errors == []
+    assert len(routes_public_api._hits) <= 50
+
+
+def test_rate_limit_without_client_shares_one_bucket(monkeypatch):
+    monkeypatch.setattr(routes_public_api, "_hits", {})
+    monkeypatch.setattr(routes_public_api, "RATE_LIMIT", 1)
+    req, resp = SimpleNamespace(client=None), SimpleNamespace(headers={})
+    routes_public_api.limit_and_cache(req, resp)
+    with pytest.raises(Exception) as exc:
+        routes_public_api.limit_and_cache(req, resp)
+    assert exc.value.status_code == 429
+
+
+def test_forwarded_for_header_is_ignored(client, monkeypatch):
+    monkeypatch.setattr(routes_public_api, "RATE_LIMIT", 2)
+    codes = [client.get("/api/public/twin", headers={"X-Forwarded-For": f"1.2.3.{i}"}).status_code for i in range(3)]
+    assert codes == [200, 200, 429]
+
+
+def test_analyses_capture_index_exists(eng):
+    cols = {tuple(i["column_names"]) for i in inspect(eng).get_indexes("analyses")}
+    assert ("capture_id",) in cols
+
+
+def test_newest_analysis_is_final(eng):
+    crop, s1, s2 = seed_basic(eng)
+    with Session(eng) as s:
+        c = cap(s, s1, D10, 8, True, NORMAL, 0.9)
+        s.add(Analysis(capture_id=c.id, label=YELLOW, confidence=0.4, needs_review=True))
+        s.commit()
+        stats.rollup(s, D10)
+    r = rows(eng)[0]
+    assert (r.n_captures, r.n_normal, r.n_yellow, r.n_review) == (1, 0, 1, 1)
+    assert r.mean_confidence == pytest.approx(0.4)
+
+
+def test_duplicate_null_batch_rows_are_cleaned_up(eng):
+    crop, s1, s2 = seed_basic(eng)
+    with Session(eng) as s:
+        cap(s, s2, D10, 8, True, NORMAL, 0.9)
+        for _ in range(3):  # UNIQUE(day, station, batch) does not stop these
+            s.add(DailyStat(day=D10, station_id=s2, batch_id=None, n_captures=99, n_quality_ok=99, n_normal=99,
+                            n_yellow=0, n_brown=0, n_review=0, mean_confidence=None))
+        s.commit()
+        assert stats.rollup(s, D10) == 1
+    r = rows(eng)
+    assert len(r) == 1 and r[0].n_captures == 1
+
+
+def test_overlap_later_planted_beats_higher_id(eng):
+    crop, s1, _ = seed_basic(eng)
+    with Session(eng) as s:
+        later = Batch(station_id=s1, crop_id=crop, planted_on=date(2026, 3, 8))  # lower id, later planting
+        earlier = Batch(station_id=s1, crop_id=crop, planted_on=date(2026, 3, 1))
+        s.add(later)
+        s.flush()
+        s.add(earlier)
+        cap(s, s1, D10, 8, True, NORMAL, 0.9)
+        s.commit()
+        assert later.id < earlier.id
+        stats.rollup(s)
+        assert rows(eng)[0].batch_id == later.id
+
+
+def test_days_are_utc_boundaries(eng):
+    crop, s1, _ = seed_basic(eng)
+    with Session(eng) as s:
+        for ts in (datetime(2026, 3, 10, 23, 59, 59), datetime(2026, 3, 11, 0, 0, 0)):
+            c = Capture(station_id=s1, taken_at=ts, image_path="/x", quality_ok=True)
+            s.add(c)
+        s.commit()
+        stats.rollup(s)
+    assert [(x.day, x.n_captures) for x in rows(eng)] == [(D10, 1), (D11, 1)]
+
+
+def test_catchup_window_limits_old_days(eng, monkeypatch):
+    today = date(2026, 6, 1)
+    monkeypatch.setattr(stats, "today", lambda: today)
+    crop, s1, _ = seed_basic(eng)
+    old, recent = today - timedelta(days=stats.CATCHUP_DAYS + 5), today - timedelta(days=stats.CATCHUP_DAYS - 5)
+    with Session(eng) as s:
+        cap(s, s1, old, 8, True, NORMAL, 0.9)
+        cap(s, s1, recent, 8, True, NORMAL, 0.9)
+        s.commit()
+        assert stats.rollup(s) == 1
+        assert stats.rollup(s, old) == 1  # an explicit day is still honoured
+    assert [x.day for x in rows(eng)] == [old, recent]
+
+
+def test_capture_survives_post_commit_refresh_failure(env):
+    client, engine, calls = env
+
+    def explode(target, context, attrs):
+        raise RuntimeError("refresh after commit")
+
+    event.listen(Station, "refresh", explode)
+    event.listen(Capture, "refresh", explode)
+    try:
+        r = _post(client, engine)
+    finally:
+        event.remove(Station, "refresh", explode)
+        event.remove(Capture, "refresh", explode)
+    assert r.status_code == 200 and r.json()["status"] == "analyzed"
+    assert len(day_of(engine)) == 1
+
+
+def test_trends_hide_inactive_and_home_stations(client, eng, monkeypatch):
+    today = date(2026, 3, 20)
+    monkeypatch.setattr(stats, "today", lambda: today)
+    crop, s1, s2 = seed_basic(eng)
+    with Session(eng) as s:
+        off = Station(rfid_uid="U9", name="ปิด", crop_id=crop, active=False)
+        home = Station(rfid_uid="H", name="บ้าน", kind="home")
+        s.add_all([off, home])
+        s.flush()
+        off_id, home_id = off.id, home.id
+        for sid in (s1, off_id, home_id):
+            cap(s, sid, today, 8, True, NORMAL, 0.9)
+        s.add(Batch(station_id=off_id, crop_id=crop, planted_on=today - timedelta(days=3)))
+        s.commit()
+        stats.rollup(s, today)
+    t = client.get("/api/public/trends?days=7").json()
+    assert [x["station_id"] for x in t["series"]] == [s1]
+    assert client.get(f"/api/public/trends?station_id={off_id}").json()["series"] == []
+    assert client.get(f"/api/public/trends?station_id={off_id}").json()["same_age"] == []
+
+
+def test_lots_near_harvest_window_and_visibility(client, eng, monkeypatch):
+    today = date(2026, 3, 20)
+    monkeypatch.setattr(stats, "today", lambda: today)
+    crop, s1, s2 = seed_basic(eng)
+    with Session(eng) as s:
+        s3 = Station(rfid_uid="U3", name="สถานี 3", crop_id=crop)
+        s4 = Station(rfid_uid="U4", name="สถานี 4", crop_id=crop, active=False)
+        home = Station(rfid_uid="H", name="บ้าน", kind="home")
+        s.add_all([s3, s4, home])
+        s.flush()
+        ages = {s1: 38, s2: 45 + 14, s3.id: 45 + 15, s4.id: 38, home.id: 38}  # 7 left, 14 overdue, 15 overdue, hidden, hidden
+        for sid, age in ages.items():
+            s.add(Batch(station_id=sid, crop_id=crop, planted_on=today - timedelta(days=age)))
+        s.add(Batch(station_id=s3.id, crop_id=crop, planted_on=today - timedelta(days=20)))  # 25 left: not near
+        s.commit()
+    b = client.get("/api/public/summary").json()
+    assert [(x["station"], x["harvest_in_days"]) for x in b["lots_near_harvest"]] == [("สถานี 2", -14), ("สถานี 1", 7)]
+    assert b["harvest_cycle_days_assumed"] == 45
+
+
+def test_twin_last_seen_is_utc_z_without_microseconds(client, eng, monkeypatch):
+    today = date(2026, 3, 20)
+    monkeypatch.setattr(stats, "today", lambda: today)
+    crop, s1, _ = seed_basic(eng)
+    with Session(eng) as s:
+        c = cap(s, s1, today, 8, True, NORMAL, 0.9)
+        c.taken_at = datetime(2026, 3, 20, 8, 30, 15, 123456)
+        s.commit()
+    st = client.get("/api/public/twin").json()["stations"][0]
+    assert st["last_seen_at"] == "2026-03-20T08:30:15Z"

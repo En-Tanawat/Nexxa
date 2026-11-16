@@ -151,7 +151,8 @@ def create_capture(
     )
     session.add(capture)
     session.flush()
-    day = capture.taken_at.date()
+    # read everything the response and the rollup need before commit(): commit expires the ORM objects
+    day, capture_id, station_id = capture.taken_at.date(), capture.id, station.id
     capture.image_path = storage.save_image(data, round_id, station.id, capture.id)
 
     label = confidence = None
@@ -166,6 +167,6 @@ def create_capture(
         label, confidence = result.label, result.confidence
         status = "needs_review" if result.needs_review else "analyzed"
     session.commit()
-    body = {"capture_id": capture.id, "status": status, "label": label, "confidence": confidence, "attempt": attempt}
-    safe_rollup(session, day, station.id)  # one upsert for this day/station; failure is swallowed
+    body = {"capture_id": capture_id, "status": status, "label": label, "confidence": confidence, "attempt": attempt}
+    safe_rollup(session, day, station_id)  # one upsert for this day/station; failure is swallowed
     return body

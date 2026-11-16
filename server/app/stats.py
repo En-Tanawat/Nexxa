@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Analysis, Batch, Capture, DailyStat
 
+CATCHUP_DAYS = 400  # start-up catch-up looks back this far only, so a cold start on a sleeping host stays cheap
 NORMAL, YELLOW, BROWN = "ปกติ", "ใบเหลือง", "จุดน้ำตาล"
 
 
@@ -82,12 +83,14 @@ def rollup(session: Session, day: date | None = None, station_id: int | None = N
     """Upsert daily_stats rows; returns rows written. Idempotent.
 
     day given: recompute that day (optionally one station). day None: recompute today plus every day that has
-    a (day, station) with captures but no row yet. Days without captures get no row.
+    a (day, station) with captures but no row yet, looking back CATCHUP_DAYS at most. Days without captures get no row.
     """
     if day is not None:
         return _day_rows(session, day, station_id)
+    cutoff = datetime.combine(today() - timedelta(days=CATCHUP_DAYS), time.min)
     captured = {tuple(r) for r in session.execute(
-        select(func.date(Capture.taken_at, type_=Date), Capture.station_id).group_by(func.date(Capture.taken_at), Capture.station_id)
+        select(func.date(Capture.taken_at, type_=Date), Capture.station_id).where(Capture.taken_at >= cutoff)
+        .group_by(func.date(Capture.taken_at), Capture.station_id)
     )}
     done = {tuple(r) for r in session.execute(select(DailyStat.day, DailyStat.station_id))}
     days = {d for d, _ in captured - done} | {today()}

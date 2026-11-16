@@ -4,6 +4,7 @@ Never add image paths, notes, rfid_uid, keys or user data here.
 Rate limit is in memory per client IP (request.client). Behind a reverse proxy run uvicorn with --proxy-headers
 (and --forwarded-allow-ips) or every visitor shares the proxy's IP.
 """
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -18,18 +19,27 @@ from app.models import Analysis, AppSetting, Batch, Capture, Crop, DailyStat, St
 RATE_LIMIT = 60  # requests per WINDOW_S per IP
 WINDOW_S = 60
 MAX_TRACKED_IPS = 10_000
-HARVEST_AGE_DAYS = 45  # shortcut: one cycle length for every crop (not in the data model); move to Crop when it differs
-NEAR_HARVEST_DAYS = 7
+# ASSUMPTION, not data: one cycle length for every crop (the model has none); reported as harvest_cycle_days_assumed.
+# shortcut: move to Crop when cycle lengths differ.
+HARVEST_AGE_DAYS = 45
+NEAR_HARVEST_DAYS = 7  # list a lot when it has <= this many days left ...
+OVERDUE_SHOWN_DAYS = 14  # ... and until it is this many days overdue (harvest_in_days is then negative)
 WEEKLY_OVER = 100  # a series with more points than this is bucketed to weeks (Monday start)
 MAX_SAME_AGE_DAYS, MAX_SAME_AGE_BATCHES = 120, 6
 REVIEW_WINDOW_DAYS = 7  # no "resolved" state exists yet, so "pending" = needs_review within the last week
 INT_MAX = 2**31 - 1
 
 _clock = time.monotonic
+_lock = threading.Lock()  # limit_and_cache is a sync dependency: it runs in the threadpool
 _hits: dict[str, list] = {}  # ip -> [window_start, count]; shortcut: single process, use a shared store if scaled out
 
 
 def allow(ip: str) -> bool:
+    with _lock:
+        return _allow(ip)
+
+
+def _allow(ip: str) -> bool:
     now = _clock()
     if len(_hits) >= MAX_TRACKED_IPS and ip not in _hits:
         for k in [k for k, v in _hits.items() if now - v[0] >= WINDOW_S]:
@@ -53,6 +63,9 @@ def limit_and_cache(request: Request, response: Response) -> None:
 
 
 router = APIRouter(prefix="/api/public", dependencies=[Depends(limit_and_cache)])
+
+
+VISIBLE = (Station.kind == "station", Station.active.is_(True))  # what the public API may show at all
 
 
 def _rate(num, den):
@@ -79,21 +92,23 @@ def summary(session: Session = Depends(get_session)):
         .where(Analysis.needs_review.is_(True), Capture.taken_at >= since))
     open_batches = session.execute(
         select(Batch, Station.name, Crop.name).join(Station, Batch.station_id == Station.id)
-        .join(Crop, Batch.crop_id == Crop.id).where(Batch.harvested_on.is_(None), Batch.planted_on <= day))
+        .join(Crop, Batch.crop_id == Crop.id).where(Batch.harvested_on.is_(None), Batch.planted_on <= day, *VISIBLE))
     lots = []
     for b, station, crop in open_batches:
         age = stats.age_days(b, day)
-        if HARVEST_AGE_DAYS - age <= NEAR_HARVEST_DAYS:
-            lots.append({"station": station, "crop": crop, "age_days": age, "harvest_in_days": max(0, HARVEST_AGE_DAYS - age)})
+        left = HARVEST_AGE_DAYS - age
+        if -OVERDUE_SHOWN_DAYS <= left <= NEAR_HARVEST_DAYS:
+            lots.append({"station": station, "crop": crop, "age_days": age, "harvest_in_days": left})
     lots.sort(key=lambda x: (x["harvest_in_days"], x["station"]))
     return {
         "updated_at": _now_iso(),
         "demo": _demo(session),
-        "stations_active": session.scalar(select(func.count(Station.id)).where(Station.kind == "station", Station.active.is_(True))),
+        "stations_active": session.scalar(select(func.count(Station.id)).where(*VISIBLE)),
         "captures_today": n_cap,
         "abnormal_rate_today": _rate(yellow + brown, normal + yellow + brown),
         "review_pending": pending,
         "lots_near_harvest": lots,
+        "harvest_cycle_days_assumed": HARVEST_AGE_DAYS,
     }
 
 
@@ -126,7 +141,8 @@ def trends(
     q = (
         select(DailyStat.station_id, DailyStat.day, *(func.sum(c) for c in (
             DailyStat.n_captures, DailyStat.n_quality_ok, DailyStat.n_normal, DailyStat.n_yellow, DailyStat.n_brown, DailyStat.n_review)))
-        .where(*where).group_by(DailyStat.station_id, DailyStat.day).order_by(DailyStat.station_id, DailyStat.day)
+        .join(Station, DailyStat.station_id == Station.id).where(*where, *VISIBLE)
+        .group_by(DailyStat.station_id, DailyStat.day).order_by(DailyStat.station_id, DailyStat.day)
     )
     per_station: dict[int, list] = {}
     for sid, day, *vals in session.execute(q):
@@ -143,7 +159,8 @@ def trends(
 def _same_age(session: Session, where: list) -> list:
     # the newest MAX batches that have stats in the window, compared on the same age (days since planting)
     top = [r[0] for r in session.execute(
-        select(DailyStat.batch_id).join(Batch, DailyStat.batch_id == Batch.id).where(*where)
+        select(DailyStat.batch_id).join(Batch, DailyStat.batch_id == Batch.id)
+        .join(Station, DailyStat.station_id == Station.id).where(*where, *VISIBLE)
         .group_by(DailyStat.batch_id, Batch.planted_on).order_by(Batch.planted_on.desc(), DailyStat.batch_id.desc())
         .limit(MAX_SAME_AGE_BATCHES))]
     if not top:
@@ -169,16 +186,24 @@ def _same_age(session: Session, where: list) -> list:
 _STATUS = {stats.NORMAL: "normal", stats.YELLOW: "yellow", stats.BROWN: "brown"}
 
 
+def _utc_z(dt: datetime) -> str:
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt.replace(microsecond=0).isoformat() + "Z"
+
+
 @router.get("/twin")
 def twin(session: Session = Depends(get_session)):
     day = stats.today()
     stations = session.execute(
         select(Station, Crop.name).outerjoin(Crop, Station.crop_id == Crop.id)
-        .where(Station.kind == "station", Station.active.is_(True)).order_by(Station.route_order, Station.id)).all()
+        .where(*VISIBLE).order_by(Station.route_order, Station.id)).all()
     batches = session.scalars(select(Batch).where(Batch.planted_on <= day)).all()
     out = []
     for st, crop in stations:
-        # shortcut: one query per station (a handful of stations); fold into a window query if it grows to hundreds
+        # one indexed LIMIT 1 per station (captures(station_id, taken_at), analyses(capture_id)); a window query
+        # over all analyses would scan the whole table on every unauthenticated request.
+        # shortcut: fine for a handful of stations; revisit at hundreds.
         last = session.execute(
             select(Analysis.label, Analysis.confidence, Analysis.needs_review, Capture.taken_at)
             .join(Capture, Analysis.capture_id == Capture.id).where(Capture.station_id == st.id)
@@ -186,9 +211,8 @@ def twin(session: Session = Depends(get_session)):
         batch = stats.active_batch([b for b in batches if b.station_id == st.id], day)
         status, seen, conf = "unknown", None, None
         if last:
-            label, conf, review, taken = last
-            status = "review" if review else _STATUS.get(label, "unknown")
-            seen = taken.isoformat()
+            status = "review" if last.needs_review else _STATUS.get(last.label, "unknown")
+            seen, conf = _utc_z(last.taken_at), last.confidence
         out.append({"id": st.id, "name": st.name, "crop": crop, "map_x": st.map_x, "map_y": st.map_y,
                     "route_order": st.route_order, "status": status,
                     "age_days": stats.age_days(batch, day) if batch else None, "last_seen_at": seen, "confidence": conf})
