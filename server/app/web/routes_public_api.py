@@ -8,20 +8,20 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import func, or_, select
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
-from app import robot, stats
+from app import robot, stats, summaries
 from app.db import get_session
-from app.models import Analysis, AppSetting, Batch, Capture, Crop, DailyStat, Station
+from app.models import Analysis, AppSetting, Batch, Capture, Crop, DailyStat, Round, Station, Summary
 
 RATE_LIMIT = 60  # requests per WINDOW_S per IP
 WINDOW_S = 60
 MAX_TRACKED_IPS = 10_000
-# ASSUMPTION, not data: one cycle length for every crop (the model has none); reported as harvest_cycle_days_assumed.
-# shortcut: move to Crop when cycle lengths differ.
-HARVEST_AGE_DAYS = 45
+HARVEST_AGE_DAYS = stats.HARVEST_AGE_DAYS  # reported as harvest_cycle_days_assumed
 NEAR_HARVEST_DAYS = 7  # list a lot when it has <= this many days left ...
 OVERDUE_SHOWN_DAYS = 14  # ... and until it is this many days overdue (harvest_in_days is then negative)
 WEEKLY_OVER = 100  # a series with more points than this is bucketed to weeks (Monday start)
@@ -241,3 +241,56 @@ def robot_frame():
     data, age = got
     return Response(data, media_type="image/jpeg", headers={
         "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "X-Frame-Age": str(age)})
+
+
+# --- inspection summaries (text + numbers only: no image paths, notes or rfid_uid) -----------------------
+
+def _summary_out(row: Summary) -> dict:
+    return {"text": row.text, "source": row.source, "updated_at": _utc_z(row.updated_at)}
+
+
+@router.get("/rounds")
+def rounds(limit: int = Query(20, ge=1, le=50), session: Session = Depends(get_session)):
+    rows = session.scalars(select(Round).order_by(Round.started_at.desc(), Round.id.desc()).limit(limit)).all()
+    ids = [r.id for r in rows]
+    n_stations = dict(session.execute(
+        select(Capture.round_id, func.count(func.distinct(Capture.station_id))).join(Station, Capture.station_id == Station.id)
+        .where(Capture.round_id.in_(ids), *VISIBLE).group_by(Capture.round_id)).all())
+    heads = dict(session.execute(select(Summary.round_id, Summary.text).where(Summary.round_id.in_(ids), Summary.station_id.is_(None))).all())
+    return {"rounds": [
+        {"id": r.id, "started_at": _utc_z(r.started_at), "status": r.status, "stations": n_stations.get(r.id, 0),
+         "headline": summaries.headline(heads[r.id]) if r.id in heads else None} for r in rows],
+        "demo": _demo(session)}
+
+
+@router.get("/rounds/{round_id}")
+def round_detail(round_id: Annotated[int, Path(ge=1, le=INT_MAX)], session: Session = Depends(get_session)):
+    rnd = session.get(Round, round_id)
+    if rnd is None:
+        raise HTTPException(404, "unknown round")
+    rows = {s.station_id: s for s in session.scalars(select(Summary).where(Summary.round_id == round_id))}
+    stations = session.execute(
+        select(Station.id, Station.name).where(*VISIBLE, Station.id.in_(select(Capture.station_id).where(Capture.round_id == round_id)))
+        .order_by(Station.route_order, Station.id)).all()
+    out = []
+    for sid, name in stations:
+        row = rows.get(sid)
+        out.append({"station_id": sid, "name": name, "summary": _summary_out(row) if row else None,
+                    "facts": row.facts if row else None})
+    whole = rows.get(None)
+    return {"id": rnd.id, "started_at": _utc_z(rnd.started_at), "status": rnd.status,
+            "summary": _summary_out(whole) if whole else None, "facts": whole.facts if whole else None,
+            "stations": out, "demo": _demo(session)}
+
+
+@router.get("/summaries/latest")
+def latest_summary(session: Session = Depends(get_session)):
+    row = session.execute(
+        select(Summary, Station.name).outerjoin(Station, Summary.station_id == Station.id)
+        .where(or_(Summary.station_id.is_(None), and_(*VISIBLE)))
+        .order_by(Summary.created_at.desc(), Summary.id.desc()).limit(1)).first()
+    if row is None:
+        return {"summary": None}
+    s, station = row
+    return {"summary": {"round_id": s.round_id, "scope": s.scope, "station": station, "headline": summaries.headline(s.text),
+                        **_summary_out(s)}}

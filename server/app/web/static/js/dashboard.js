@@ -20,7 +20,7 @@ const make = (tag, className, text) => {
 };
 const clone = (id) => $(id).content.firstElementChild.cloneNode(true);
 
-const state = { summary: null, twin: null, trends: null, trendsAt: 0, fetchedAt: 0, error: null, timer: null, ticker: null, inflight: false };
+const state = { summary: null, twin: null, latest: null, trends: null, trendsAt: 0, fetchedAt: 0, error: null, timer: null, ticker: null, inflight: false };
 let twinInstance = null;
 
 async function syncTwin() {
@@ -144,6 +144,19 @@ function renderPill(now) {
   }
 }
 
+function renderLatest(latest) {
+  if (!latest) return;
+  const lines = String(latest.text ?? "").split("
+").filter((l) => l.trim());
+  $("latest-text").replaceChildren(...lines.map((l) => make("p", "", l)));
+  const ai = latest.source === "ai";
+  const badge = clone(`tpl-badge-${ai ? "info" : "neutral"}`);
+  badge.lastElementChild.textContent = ai ? "สรุปโดย AI" : "สรุปอัตโนมัติ";
+  $("latest-src").replaceChildren(badge, make("span", "", `อัปเดต ${fmtDateTime(latest.updated_at)}`));
+  $("latest-sub").textContent = latest.station ? `รอบที่ ${fmtInt(latest.round_id)} · สถานี ${latest.station}` : `สรุปทั้งรอบที่ ${fmtInt(latest.round_id)}`;
+  $("latest-link").setAttribute("href", `/history/${Number(latest.round_id)}`);
+}
+
 function render() {
   const now = Date.now();
   const { summary, twin } = state;
@@ -161,6 +174,7 @@ function render() {
     renderKpis(summary, yesterdayAbnormal(state.trends, summary.updated_at));
     renderLots(summary);
   }
+  renderLatest(state.latest);
   if (twin) {
     renderStations(twin, now);
     syncTwin();
@@ -177,14 +191,16 @@ async function refresh() {
   clearTimeout(state.timer);
   state.inflight = true;
   const wantTrends = Date.now() - state.trendsAt >= TRENDS_EVERY_MS;
-  const [s, t, tr] = await Promise.allSettled([
+  const [s, t, tr, lt] = await Promise.allSettled([
     getJson("/api/public/summary"),
     getJson("/api/public/twin"),
     wantTrends ? getJson("/api/public/trends?days=2") : Promise.resolve(state.trends),
+    getJson("/api/public/summaries/latest"),
   ]);
   state.inflight = false;
   if (s.status === "fulfilled") state.summary = s.value;
   if (t.status === "fulfilled") state.twin = t.value;
+  if (lt.status === "fulfilled") state.latest = lt.value.summary; // a failure here never turns the page into an error
   if (tr.status === "fulfilled") {
     if (wantTrends) state.trendsAt = Date.now();
     state.trends = tr.value;
@@ -286,6 +302,7 @@ function renderRobot(data) {
         moving: "info",
         inspecting: "warn",
         analyzing: "info",
+        summarizing: "info",
         returning: "info",
         docked: "ok",
         error: "danger",

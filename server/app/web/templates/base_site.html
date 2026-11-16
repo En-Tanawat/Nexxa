@@ -1,5 +1,5 @@
 {%- extends "base_public.html" -%}
-{#- Layout of the public pages (no login): glass top bar + one frosted sheet. Children set {% set active = "dashboard" | "trends" %}
+{#- Layout of the public pages (no login): glass top bar + one frosted sheet. Children set {% set active = "dashboard" | "trends" | "history" %}
     and fill {% block content %}; the bar's status pill comes from {% block bar_status %}. -#}
 {% block body_class %}page-public{% endblock %}
 {% block body %}
@@ -9,6 +9,7 @@
     <nav class="pub-nav" aria-label="เมนูหลัก">
       <a class="nav__link" href="/"{% if active == "dashboard" %} aria-current="page"{% endif %}>{{ c.icon("overview", 20) }}<span>แดชบอร์ด</span></a>
       <a class="nav__link" href="/trends"{% if active == "trends" %} aria-current="page"{% endif %}>{{ c.icon("chart", 20) }}<span>กราฟแนวโน้ม</span></a>
+      <a class="nav__link" href="/history"{% if active == "history" %} aria-current="page"{% endif %}>{{ c.icon("activity", 20) }}<span>สรุปรอบตรวจ</span></a>
     </nav>
     <div class="topbar__user">
       {% block bar_status %}{% endblock %}

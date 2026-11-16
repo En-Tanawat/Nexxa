@@ -3,8 +3,9 @@ import os
 import struct
 from contextlib import asynccontextmanager
 from datetime import date
+from typing import Annotated
 
-from fastapi import Depends, FastAPI, Form, Header, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, Form, Header, HTTPException, Path, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -12,7 +13,7 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import analyzer, robot, runtime_config, stats, storage
+from app import analyzer, robot, runtime_config, stats, storage, summaries
 from app.config import settings
 from app.db import engine, get_session, init_db
 from app.models import Analysis, Capture, Crop, Round, Station
@@ -136,7 +137,7 @@ class RobotTelemetryInput(BaseModel):
     @field_validator("state")
     @classmethod
     def validate_state(cls, v):
-        if v is not None and v not in {"idle", "moving", "inspecting", "analyzing", "returning", "docked", "error"}:
+        if v is not None and v not in robot.VALID_STATES:
             raise ValueError("invalid state")
         return v
 
@@ -163,8 +164,15 @@ class RobotTelemetryInput(BaseModel):
 
 
 @app.post("/api/robot/telemetry", dependencies=[Depends(require_device_key)])
-def post_robot_telemetry(payload: RobotTelemetryInput, session: Session = Depends(get_session)):
+def post_robot_telemetry(payload: RobotTelemetryInput, background: BackgroundTasks, session: Session = Depends(get_session)):
     robot.robot.update_telemetry(session, payload.model_dump(exclude_unset=True))
+    if payload.state == "docked" and payload.round_id is not None:
+        # fallback only: the robot normally calls POST /rounds/{id}/finish first, which makes the round summary
+        try:
+            if not summaries.has_round_summary(session, payload.round_id):
+                background.add_task(summaries.docked_fallback, payload.round_id)
+        except Exception as e:  # telemetry must never fail because of summaries
+            log.warning("docked summary check failed: %s", type(e).__name__)
     return {"ok": True, "updated_at": robot.robot.updated_at}
 
 
@@ -307,3 +315,40 @@ def create_capture(
     body = {"capture_id": capture_id, "status": status, "label": label, "confidence": confidence, "attempt": attempt}
     safe_rollup(session, day, station_id)  # one upsert for this day/station; failure is swallowed
     return body
+
+
+RoundId = Annotated[int, Path(ge=1, le=2**31 - 1)]  # larger ids would overflow SQLite
+
+
+def _summary_body(row, station_id: int | None) -> dict:
+    """What the robot gets back. Key order matters: the firmware keeps only the first ~700 bytes, so `display` comes
+    first and the (Thai, 3 bytes per character) headline last. `display` is ASCII built from the facts, never from AI text."""
+    return {"ready": True, "display": summaries.display(row.facts), "source": row.source, "round_id": row.round_id,
+            "station_id": station_id, "headline": summaries.device_headline(row.text)}
+
+
+@app.post("/rounds/{round_id}/stations/{rfid_uid}/summary", dependencies=[Depends(require_device_key)])
+def create_station_summary(round_id: RoundId, rfid_uid: str, session: Session = Depends(get_session)):
+    """The robot waits for this before driving on. Template text is always made; the AI wording gets 25 s at most."""
+    if session.get(Round, round_id) is None:
+        raise HTTPException(404, "unknown round")
+    station = session.scalar(select(Station).where(Station.rfid_uid == rfid_uid))
+    if station is None:
+        raise HTTPException(404, "unknown rfid_uid")
+    if session.scalar(select(Capture.id).where(Capture.round_id == round_id, Capture.station_id == station.id).limit(1)) is None:
+        raise HTTPException(409, "no capture for this station in this round")
+    return _summary_body(summaries.generate_station_summary(session, round_id, station.id), station.id)
+
+
+@app.post("/rounds/{round_id}/finish", dependencies=[Depends(require_device_key)])
+def finish_round(round_id: RoundId, session: Session = Depends(get_session)):
+    rnd = session.get(Round, round_id)
+    if rnd is None:
+        raise HTTPException(404, "unknown round")
+    summaries.ensure_station_summaries(session, round_id)  # any the robot skipped: template only
+    row = summaries.generate_round_summary(session, round_id)
+    rnd = session.get(Round, round_id)
+    if rnd.status == "open":  # a seeded "demo" round keeps its status
+        rnd.status = "done"
+        session.commit()
+    return _summary_body(row, None)

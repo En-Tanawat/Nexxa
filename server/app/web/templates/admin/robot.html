@@ -154,5 +154,30 @@
       {% endcall %}
     </div>
   </div>
+
+  {% call c.card("สรุปผลรอบตรวจ", subtitle="ปุ่มสร้างสรุปใหม่จะเขียนสรุปรายสถานีและทั้งรอบอีกครั้ง (ใช้ AI ถ้าตั้งค่าไว้) ใช้เวลาสักครู่ แล้วโหลดหน้านี้ใหม่", icon="activity") %}
+  {%- if round_rows %}
+  <ul class="row-list" role="list">
+    {%- for r in round_rows %}
+    <li>
+      <div class="row__main">
+        <p class="row__name"><a href="/history/{{ r.id }}">รอบที่ {{ r.id }}</a> · {{ r.status }}</p>
+        <p class="row__meta">{{ r.headline or "ยังไม่มีสรุปของรอบนี้" }}{% if r.source %} ({{ "AI" if r.source == "ai" else "อัตโนมัติ" }}){% endif %}</p>
+      </div>
+      {%- if not can or can("robot", "update") %}
+      <div class="row__side">
+        <form method="post" action="/admin/rounds/{{ r.id }}/summary" data-busy-form>
+          {{ c.csrf_field() }}
+          <button type="submit" class="btn btn--secondary btn--sm">{{ c.icon("refresh", 16) }} <span>สร้างสรุปใหม่</span></button>
+        </form>
+      </div>
+      {%- endif %}
+    </li>
+    {%- endfor %}
+  </ul>
+  {%- else %}
+  <p class="list-empty">ยังไม่มีรอบตรวจ</p>
+  {%- endif %}
+  {% endcall %}
 </div>
 {% endblock %}

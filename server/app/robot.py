@@ -1,6 +1,6 @@
 """In-memory thread-safe state container and tracker for NEXXA robot telemetry.
 
-Tracks live state (idle, moving, inspecting, analyzing, returning, docked, error),
+Tracks live state (idle, moving, inspecting, analyzing, summarizing, returning, docked, error),
 inspection step pipeline (1..5), battery, Wi-Fi RSSI, the latest camera frame (relay), and handles
 automatic synchronization from round creation and leaf capture analysis.
 
@@ -21,6 +21,7 @@ STATE_LABELS = {
     "moving": "กำลังเคลื่อนที่",
     "inspecting": "กำลังตรวจสอบ",
     "analyzing": "กำลังวิเคราะห์ผล",
+    "summarizing": "กำลังสรุปผล",
     "returning": "กำลังเดินทางกลับจุดจอด",
     "docked": "จอดที่แท่นชาร์จ",
     "error": "เกิดข้อผิดพลาด",
@@ -34,7 +35,7 @@ ANGLE_LABELS = {
     "left": "ซ้าย",
 }
 
-VALID_STATES = {"idle", "moving", "inspecting", "analyzing", "returning", "docked", "error"}
+VALID_STATES = {"idle", "moving", "inspecting", "analyzing", "summarizing", "returning", "docked", "error"}
 VALID_ANGLES = {"front", "right", "back", "left"}
 
 FRAME_MIN_INTERVAL_S = 1  # minimum seconds between accepted frames

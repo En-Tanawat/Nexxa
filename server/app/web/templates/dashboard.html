@@ -183,6 +183,16 @@
     </div>
   </section>
 
+  <section class="card panel" id="latest-summary" aria-labelledby="latest-title">
+    <header class="card__head">
+      <span class="icon-tile">{{ c.icon("activity", 20) }}</span>
+      <div><h2 class="card__title" id="latest-title">สรุปล่าสุด</h2><p class="card__subtitle" id="latest-sub">ผลการตรวจล่าสุดเทียบกับวันก่อนหน้าและแนวโน้ม</p></div>
+    </header>
+    <div class="summary-text" id="latest-text"><p>ยังไม่มีสรุปการตรวจ</p></div>
+    <p class="summary-src" id="latest-src"></p>
+    <p><a class="btn btn--secondary btn--sm" id="latest-link" href="/history"><span class="btn__label">ดูสรุปทุกรอบ</span></a></p>
+  </section>
+
   <div class="dash-grid">
     <section class="card panel" aria-labelledby="twin-title">
       <header class="card__head">

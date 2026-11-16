@@ -10,16 +10,16 @@ from datetime import date, timedelta
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Path, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import seed_demo
+from app import seed_demo, summaries
 from app.create_admin import MIN_PASSWORD_LEN
 from app.db import get_session
-from app.models import (AdminUser, AppSetting, AuditLog, Batch, Capture, Crop, DailyStat, DeviceKey, ProviderKey, Round, Station)
+from app.models import (AdminUser, AppSetting, AuditLog, Batch, Capture, Crop, DailyStat, DeviceKey, ProviderKey, Round, Station, Summary)
 from app.robot import robot as robot_monitor
 from app.web import audit, deps, secretbox, security
 from app.web.templating import render
@@ -41,7 +41,7 @@ ACTION_TH = {
     "key.create": "สร้างคีย์ AI", "key.replace": "เปลี่ยนคีย์ AI", "key.toggle": "เปิด/ปิดคีย์ AI", "key.delete": "ลบคีย์ AI",
     "device.create": "สร้าง device key", "device.revoke": "ยกเลิก device key", "ai.update": "แก้ไขการตั้งค่า AI",
     "setting.update": "แก้ไขการตั้งค่าระบบ", "robot.simulate": "จำลองส่งข้อมูลหุ่นยนต์", "robot.reset": "รีเซ็ตสถานะหุ่นยนต์",
-    "demo.seed": "สร้างข้อมูลจำลองฤดูกาล", "demo.clear": "ล้างข้อมูลจำลอง",
+    "summary.regenerate": "สร้างสรุปรอบตรวจใหม่", "demo.seed": "สร้างข้อมูลจำลองฤดูกาล", "demo.clear": "ล้างข้อมูลจำลอง",
 }
 
 
@@ -756,7 +756,10 @@ def robot_page(request: Request, session: Session = Depends(get_session)):
     status = robot_monitor.get_robot_status(session)
     now = time.time()
     heartbeat_age = int(now - status["updated_at"]) if status["updated_at"] > 0 else None
-    recent_rounds = session.scalars(select(Round).order_by(Round.id.desc()).limit(5)).all()
+    recent_rounds = session.scalars(select(Round).order_by(Round.id.desc()).limit(10)).all()
+    whole = {x.round_id: x for x in session.scalars(select(Summary).where(Summary.station_id.is_(None), Summary.round_id.in_([r.id for r in recent_rounds])))}
+    round_rows = [{"id": r.id, "status": r.status, "source": whole[r.id].source if r.id in whole else None,
+                   "headline": summaries.headline(whole[r.id].text) if r.id in whole else None} for r in recent_rounds]
     stations = session.scalars(select(Station).where(Station.active).order_by(Station.route_order, Station.id)).all()
     return render(
         request,
@@ -764,8 +767,25 @@ def robot_page(request: Request, session: Session = Depends(get_session)):
         status=status,
         heartbeat_age=heartbeat_age,
         recent_rounds=recent_rounds,
+        round_rows=round_rows,
         stations=stations,
     )
+
+
+@router.post("/rounds/{round_id}/summary", dependencies=[*CSRF, Depends(deps.require_permission("robot", "update"))])
+def round_summary_regenerate(
+    request: Request,
+    round_id: Id,
+    background: BackgroundTasks,
+    admin: AdminUser = Depends(deps.require_permission("robot", "update")),
+    session: Session = Depends(get_session),
+):
+    if session.get(Round, round_id) is None:
+        return _missing(request)
+    audit.record(session, admin.username, "summary.regenerate", f"รอบที่ {round_id}", "สร้างสรุปรายสถานีและทั้งรอบใหม่ (ใช้ AI ถ้าตั้งค่าไว้)")
+    session.commit()
+    background.add_task(summaries.regenerate_round, round_id)  # AI calls can take a while: not inside the request
+    return _done(request, "/admin/robot", f"กำลังสร้างสรุปรอบที่ {round_id} ใหม่ โหลดหน้านี้ใหม่ในอีกสักครู่")
 
 
 @router.post("/robot/simulate", dependencies=[*CSRF, Depends(deps.require_permission("robot", "update"))])

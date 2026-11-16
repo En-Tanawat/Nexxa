@@ -11,6 +11,8 @@ from app.models import Analysis, Batch, Capture, DailyStat
 
 CATCHUP_DAYS = 400  # start-up catch-up looks back this far only, so a cold start on a sleeping host stays cheap
 NORMAL, YELLOW, BROWN = "ปกติ", "ใบเหลือง", "จุดน้ำตาล"
+# ASSUMPTION, not data: one cycle length for every crop (the model has none); shortcut: move to Crop when cycle lengths differ.
+HARVEST_AGE_DAYS = 45
 
 
 def today() -> date:

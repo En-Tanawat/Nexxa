@@ -111,6 +111,22 @@ class DailyStat(Base):
     mean_confidence: Mapped[float | None]
 
 
+class Summary(Base):
+    # (round_id, station_id) is NOT unique-protected for station_id NULL (whole round); summaries.py upserts itself.
+    __tablename__ = "summaries"
+    __table_args__ = (Index("ix_summaries_round_station", "round_id", "station_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    round_id: Mapped[int] = mapped_column(ForeignKey("rounds.id"))
+    station_id: Mapped[int | None] = mapped_column(ForeignKey("stations.id"))
+    scope: Mapped[str] = mapped_column(String)  # "station" | "round"
+    text: Mapped[str]
+    facts: Mapped[dict] = mapped_column(JSON)
+    source: Mapped[str] = mapped_column(String)  # "template" | "ai"
+    model: Mapped[str | None]
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+    updated_at: Mapped[datetime] = mapped_column(default=_now)
+
+
 class AdminUser(Base):
     __tablename__ = "admin_users"
     id: Mapped[int] = mapped_column(primary_key=True)

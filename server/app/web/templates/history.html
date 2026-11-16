@@ -1,0 +1,44 @@
+{%- extends "base_site.html" -%}
+{%- set active = "history" -%}
+{% block title %}สรุปรอบตรวจ{% endblock %}
+{% block head %}
+  <meta name="description" content="สรุปผลการตรวจผักของหุ่นยนต์ NEXXA ในแต่ละรอบ เทียบกับวันก่อนหน้าและแนวโน้ม">
+  <script src="/static/js/history.js" type="module"></script>
+{% endblock %}
+
+{% block content %}
+{{ c.page_header("สรุปรอบตรวจ", eyebrow="แดชบอร์ดสาธารณะ", text="สรุปผลของแต่ละรอบที่หุ่นยนต์ตรวจ เทียบกับวันก่อนหน้าและแนวโน้ม") }}
+
+<div id="demo-banner"{% if not demo %} hidden{% endif %}>
+  {{ c.alert("info", "ข้อมูลที่เห็นในหน้านี้เป็นตัวอย่างสำหรับสาธิตระบบ ไม่ใช่ข้อมูลจริงของโรงเรือน", title="ข้อมูลตัวอย่าง (DEMO)") }}
+</div>
+
+<div class="alert-bar" id="error-banner" role="alert" hidden>
+  <div class="alert alert--warn">
+    {{ c.icon("warn", 20) }}
+    <div class="alert__body"><p class="alert__title">โหลดข้อมูลไม่สำเร็จ</p><p id="error-text"></p></div>
+    <button class="btn btn--secondary btn--sm" type="button" id="retry-btn">{{ c.icon("refresh", 18) }}<span class="btn__label">ลองใหม่</span></button>
+  </div>
+</div>
+
+<noscript><p class="note">หน้านี้ต้องเปิดใช้ JavaScript เพื่อแสดงสรุปรอบตรวจ</p></noscript>
+
+<div id="history-empty"{% if has_data %} hidden{% endif %}>
+  {{ c.empty_state("ยังไม่มีรอบตรวจ", "เมื่อหุ่นยนต์เริ่มตรวจและส่งผลเข้ามา สรุปของแต่ละรอบจะปรากฏที่นี่โดยอัตโนมัติ", icon="activity") }}
+</div>
+
+<ul class="round-list" id="round-list" role="list" aria-label="รอบตรวจ เรียงจากใหม่ไปเก่า"{% if not has_data %} hidden{% endif %}></ul>
+
+<template id="tpl-round">
+  <li>
+    <a class="card card--link round-item" href="">
+      <span class="round-item__top"><span class="round-item__title"></span><span data-slot="badge"></span></span>
+      <span class="round-item__meta"></span>
+      <span class="round-item__head"></span>
+    </a>
+  </li>
+</template>
+{%- for kind in ["ok", "warn", "danger", "info", "neutral"] %}
+<template id="tpl-badge-{{ kind }}">{{ c.badge(kind, "") }}</template>
+{%- endfor %}
+{% endblock %}

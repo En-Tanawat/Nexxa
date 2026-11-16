@@ -21,7 +21,7 @@ from sqlalchemy import delete, func, not_, select
 from sqlalchemy.orm import Session
 
 from app import stats
-from app.models import Analysis, AppSetting, Batch, Capture, Crop, DailyStat, Round, Station
+from app.models import Analysis, AppSetting, Batch, Capture, Crop, DailyStat, Round, Station, Summary
 
 ANGLES = ["front", "right", "back", "left"]
 DEMO_PREFIX = "demo://"
@@ -398,6 +398,7 @@ def clear(session: Session) -> dict:
     # Find demo rounds
     demo_round_ids = session.scalars(select(Round.id).where(Round.status == "demo")).all()
     if demo_round_ids:
+        session.execute(delete(Summary).where(Summary.round_id.in_(demo_round_ids)))
         session.execute(delete(Round).where(Round.id.in_(demo_round_ids)))
 
     # Find demo batches

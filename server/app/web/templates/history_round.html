@@ -1,0 +1,65 @@
+{%- extends "base_site.html" -%}
+{%- set active = "history" -%}
+{% block title %}สรุปรอบที่ {{ round_id }}{% endblock %}
+{% block head %}
+  <meta name="description" content="สรุปผลการตรวจผักรอบที่ {{ round_id }} รายสถานี เทียบกับวันก่อนหน้าและแนวโน้ม">
+  <script src="/static/js/history.js" type="module"></script>
+{% endblock %}
+
+{% block content %}
+<a class="back-link" href="/history"><span aria-hidden="true">←</span><span>กลับไปรายการรอบตรวจ</span></a>
+{{ c.page_header("สรุปรอบที่ " ~ round_id, eyebrow="สรุปรอบตรวจ", text="ผลของแต่ละสถานีเทียบกับ 7 วันก่อนหน้า แนวโน้ม 14 วัน และการตรวจครั้งก่อน") }}
+
+<div id="demo-banner"{% if not demo %} hidden{% endif %}>
+  {{ c.alert("info", "ข้อมูลที่เห็นในหน้านี้เป็นตัวอย่างสำหรับสาธิตระบบ ไม่ใช่ข้อมูลจริงของโรงเรือน", title="ข้อมูลตัวอย่าง (DEMO)") }}
+</div>
+
+<div class="alert-bar" id="error-banner" role="alert" hidden>
+  <div class="alert alert--warn">
+    {{ c.icon("warn", 20) }}
+    <div class="alert__body"><p class="alert__title">โหลดข้อมูลไม่สำเร็จ</p><p id="error-text"></p></div>
+    <button class="btn btn--secondary btn--sm" type="button" id="retry-btn">{{ c.icon("refresh", 18) }}<span class="btn__label">ลองใหม่</span></button>
+  </div>
+</div>
+
+<noscript><p class="note">หน้านี้ต้องเปิดใช้ JavaScript เพื่อแสดงสรุปรอบตรวจ</p></noscript>
+
+<div class="stack-lg" id="round-detail" data-round-id="{{ round_id }}">
+  <section class="card panel" aria-labelledby="round-summary-title">
+    <header class="card__head">
+      <span class="icon-tile">{{ c.icon("activity", 20) }}</span>
+      <div><h2 class="card__title" id="round-summary-title">ภาพรวมทั้งรอบ</h2><p class="card__subtitle" id="round-meta">กำลังโหลดข้อมูล</p></div>
+    </header>
+    <div class="card__body">
+      <p class="summary-src" id="round-src"></p>
+      <div class="summary-text" id="round-text"><p class="list-empty">กำลังโหลดข้อมูล</p></div>
+      <dl class="fact-list" id="round-facts"></dl>
+    </div>
+  </section>
+  <ul class="station-cards" id="station-cards" role="list" aria-label="สรุปรายสถานี"></ul>
+</div>
+
+{%- for kind in ["ok", "warn", "danger", "info", "neutral"] %}
+<template id="tpl-badge-{{ kind }}">{{ c.badge(kind, "") }}</template>
+{%- endfor %}
+{%- for dir, icon in [("up", "trend-up"), ("down", "trend-down"), ("flat", "trend-flat"), ("none", "info")] %}
+<template id="tpl-trend-{{ dir }}"><span class="trend">{{ c.icon(icon, 16) }}<span></span></span></template>
+{%- endfor %}
+<template id="tpl-station-card">
+  <li>
+    <article class="card panel station-card">
+      <header class="card__head">
+        <span class="icon-tile">{{ c.icon("station", 20) }}</span>
+        <div><h3 class="card__title" data-f="name"></h3><p class="card__subtitle" data-f="meta"></p></div>
+      </header>
+      <p class="summary-src" data-f="src"></p>
+      <ul class="angle-chips" role="list" aria-label="มุมกล้องที่พบอาการหรือตรวจไม่ได้" data-f="angles"></ul>
+      <dl class="fact-list" data-f="facts"></dl>
+      <div class="summary-text" data-f="text"></div>
+    </article>
+  </li>
+</template>
+<template id="tpl-angle">
+  <li class="angle-chip"><span class="angle-chip__name"></span><span data-slot="badge"></span></li>
+</template>
+{% endblock %}
