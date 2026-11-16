@@ -18,4 +18,7 @@
     theme = dark ? "dark" : "light";
   }
   document.documentElement.setAttribute("data-theme", theme);
+  // Browser chrome colour = the theme's --color-background (light / dark blocks in nexxa.css).
+  var meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", theme === "dark" ? "#0B1911" : "#E7F0E8");
 })();

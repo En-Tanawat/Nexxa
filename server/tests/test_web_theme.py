@@ -107,6 +107,22 @@ def test_login_page_keeps_its_behaviour_hooks(pages):
     assert 'src="/static/img/login-fern.webp"' in html and 'alt=""' in html
 
 
+CC_BY = "https://creativecommons.org/licenses/by/4.0/"
+PHOTO_PAGE = "https://commons.wikimedia.org/wiki/File:Fresh_green_leaves_background_(55060632960).jpg"
+
+
+def test_every_page_shows_the_background_photo_credit(pages):
+    # CC BY 4.0 needs visible attribution wherever the photo shows: login, admin, error pages.
+    for path, r in pages.items():
+        html = r.text
+        m = re.search(r'<footer class="site-credit">(.*?)</footer>', html, re.S)
+        assert m, path
+        credit = m.group(1)
+        assert "AS Photography" in credit and "CC BY 4.0" in credit and "ภาพพื้นหลัง" in credit, path
+        for url in (CC_BY, PHOTO_PAGE):
+            assert re.search(rf'<a href="{re.escape(url)}" rel="noopener noreferrer"', credit), (path, url)
+
+
 # --- CSS tokens ---------------------------------------------------------------
 
 def _blocks():
@@ -226,13 +242,33 @@ def _pairs(mode):
               ("primary button bottom", col("--color-on-accent"), col("--color-accent-deep")),
               ("danger button hover", col("--color-on-destructive"), col("--color-destructive")),
               ("code", col("--color-code-fg"), _over(col("--color-deep"), card)),
-              ("login art text", col("--art-text"), _over(col("--art-scrim"), WHITE))]
+              ("login art text", col("--art-text"), _over(col("--art-scrim"), WHITE)),
+              ("photo credit text", col("--color-muted-foreground"), panel),   # footer pill = strong glass
+              ("photo credit link", col("--color-accent-strong"), panel)]
     return pairs
+
+
+def _ui_pairs(mode):
+    """Non-text boundaries (WCAG 1.4.11, 3:1): input borders against the field fill."""
+    t = _theme(mode)
+    col = lambda name: _color(t[name], t)  # noqa: E731
+    ground = _over(col("--bg-scrim"), BLACK if mode == "light" else WHITE)
+    card = _over(col("--glass-bg"), _over(col("--glass-bg-soft"), ground))
+    panel = _over(col("--glass-bg-strong"), ground)
+    return [(f"input border on {name}", col("--color-border"), _over(col("--input-bg"), surf))
+            for name, surf in (("card", card), ("panel", panel))]
 
 
 @pytest.mark.parametrize("mode", ["light", "dark"])
 def test_text_contrast_is_aa_in_both_modes(mode):
     failures = [(name, round(contrast(fg, bg), 2)) for name, fg, bg in _pairs(mode) if contrast(fg, bg) < 4.5]
+    assert not failures, failures
+    assert any(name.startswith("photo credit") for name, _, _ in _pairs(mode))
+
+
+@pytest.mark.parametrize("mode", ["light", "dark"])
+def test_form_control_borders_reach_3_to_1(mode):
+    failures = [(name, round(contrast(fg, bg), 2)) for name, fg, bg in _ui_pairs(mode) if contrast(fg, bg) < 3]
     assert not failures, failures
 
 
@@ -267,6 +303,11 @@ def test_theme_scripts_are_safe_and_valid():
         assert "nexxa-theme" in src and "localStorage" in src and "try" in src and "catch" in src, name
     init = (STATIC / "js" / "theme-init.js").read_text(encoding="utf-8")
     assert "prefers-color-scheme" in init and "data-theme" in init
+    # theme-color meta follows the chosen mode at first paint, with each theme's --color-background
+    assert 'meta[name="theme-color"]' in init
+    for mode in ("light", "dark"):
+        assert _theme(mode)["--color-background"] in init, mode
+    assert "aria-pressed" in (STATIC / "js" / "theme-toggle.js").read_text(encoding="utf-8")
     node = shutil.which("node")
     if node is None:
         pytest.skip("node not installed")
