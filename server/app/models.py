@@ -1,6 +1,6 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
-from sqlalchemy import JSON, ForeignKey, String
+from sqlalchemy import JSON, ForeignKey, Index, LargeBinary, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -44,6 +44,7 @@ class Round(Base):
 
 class Capture(Base):
     __tablename__ = "captures"
+    __table_args__ = (Index("ix_captures_station_taken", "station_id", "taken_at"),)
     id: Mapped[int] = mapped_column(primary_key=True)
     round_id: Mapped[int | None] = mapped_column(ForeignKey("rounds.id"))
     station_id: Mapped[int] = mapped_column(ForeignKey("stations.id"))
@@ -65,3 +66,80 @@ class Analysis(Base):
     note: Mapped[str | None]
     model: Mapped[str | None]
     needs_review: Mapped[bool] = mapped_column(default=False)
+
+
+class Batch(Base):
+    __tablename__ = "batches"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    station_id: Mapped[int] = mapped_column(ForeignKey("stations.id"))
+    crop_id: Mapped[int] = mapped_column(ForeignKey("crops.id"))
+    planted_on: Mapped[date]
+    harvested_on: Mapped[date | None]
+    notes: Mapped[str | None]
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+
+
+class DailyStat(Base):
+    __tablename__ = "daily_stats"
+    __table_args__ = (
+        UniqueConstraint("day", "station_id", "batch_id"),
+        Index("ix_daily_stats_day_station", "day", "station_id"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    day: Mapped[date]
+    station_id: Mapped[int] = mapped_column(ForeignKey("stations.id"))
+    batch_id: Mapped[int | None] = mapped_column(ForeignKey("batches.id"))
+    n_captures: Mapped[int]
+    n_quality_ok: Mapped[int]
+    n_normal: Mapped[int]
+    n_yellow: Mapped[int]
+    n_brown: Mapped[int]
+    n_review: Mapped[int]
+    mean_confidence: Mapped[float | None]
+
+
+class AdminUser(Base):
+    __tablename__ = "admin_users"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String, unique=True)
+    password_hash: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+    last_login_at: Mapped[datetime | None]
+
+
+class ProviderKey(Base):
+    __tablename__ = "provider_keys"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider: Mapped[str]
+    label: Mapped[str]
+    secret_enc: Mapped[bytes] = mapped_column(LargeBinary)
+    last4: Mapped[str]
+    active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+
+
+class DeviceKey(Base):
+    __tablename__ = "device_keys"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    label: Mapped[str]
+    key_hash: Mapped[str] = mapped_column(String, unique=True)
+    last4: Mapped[str]
+    active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+    revoked_at: Mapped[datetime | None]
+
+
+class AppSetting(Base):
+    __tablename__ = "app_settings"
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    value: Mapped[str]
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    at: Mapped[datetime] = mapped_column(default=_now)
+    actor: Mapped[str]
+    action: Mapped[str]
+    target: Mapped[str]
+    detail: Mapped[str | None]
