@@ -28,6 +28,7 @@ scratch_research/
 .superpowers/
 .claude/
 *.diff
+design-system/
 docs/superpowers/
 docs/screenshots/
 brain/
