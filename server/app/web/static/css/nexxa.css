@@ -58,7 +58,6 @@
   --sidebar-w: 264px;
   --topbar-h: 64px;
   --shell-gap: 16px;
-  --credit-h: 2.75rem;  /* photo credit line under every layout */
   --content-max: 100%;
   --z-sticky: 20;
   --z-toast: 50;
@@ -856,22 +855,9 @@ html:not([data-theme]) .theme-toggle { display: none; }
 .auth-split .btn--primary { min-height: 52px; margin-top: var(--space-sm); letter-spacing: 0.02em; }
 .auth-split .alert { border-radius: var(--radius-lg); }
 
-/* Photo credit (CC BY 4.0): a small glass pill under every layout, never over content. */
-.site-credit { display: flex; justify-content: center; padding: 0 var(--space-md) calc(var(--space-md) + env(safe-area-inset-bottom, 0px)); }
-.page-admin .site-credit { margin-top: calc(-1 * var(--shell-gap) + var(--space-xs)); }
-.site-credit__text {
-  padding: 0.3rem 0.9rem; border-radius: var(--radius-full); text-align: center;
-  font-size: var(--text-xs); color: var(--color-muted-foreground);
-  background: var(--glass-bg-strong); border: 1px solid var(--glass-border); box-shadow: var(--shadow-sm);
-}
-.site-credit__text a { color: var(--color-accent-strong); font-weight: 600; }
-.site-credit__text a:hover { color: var(--color-link-hover); }
-/* Login/error: keep the card centred in the first screen and the credit just below it. */
-.page-auth .auth { min-height: calc(100vh - var(--credit-h)); min-height: calc(100dvh - var(--credit-h)); }
-
 /* 11. Admin shell ---------------------------------------------------------- */
 .shell {
-  display: grid; min-height: calc(100vh - var(--credit-h)); min-height: calc(100dvh - var(--credit-h));
+  display: grid; min-height: 100vh; min-height: 100dvh;
   grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
   grid-template-rows: auto 1fr;
   grid-template-areas: "side top" "side main";
@@ -879,7 +865,7 @@ html:not([data-theme]) .theme-toggle { display: none; }
 }
 .sidebar {
   grid-area: side; position: sticky; top: var(--shell-gap);
-  height: calc(100vh - 2 * var(--shell-gap) - var(--credit-h)); height: calc(100dvh - 2 * var(--shell-gap) - var(--credit-h));
+  height: calc(100vh - 2 * var(--shell-gap)); height: calc(100dvh - 2 * var(--shell-gap));
   display: flex; flex-direction: column; gap: var(--space-lg);
   padding: var(--space-md);
   background: var(--glass-bg-strong);
@@ -1117,7 +1103,7 @@ html:not([data-theme]) .theme-toggle { display: none; }
 .pub {
   display: grid; align-content: start; gap: var(--shell-gap); padding: var(--shell-gap);
   width: 100%; max-width: 100%; margin-inline: auto;
-  min-height: calc(100vh - var(--credit-h)); min-height: calc(100dvh - var(--credit-h));
+  min-height: 100vh; min-height: 100dvh;
 }
 .pub .topbar, .pub .content { grid-area: auto; }  /* the admin shell's named areas do not exist here */
 .pub .topbar { position: sticky; }
@@ -1127,7 +1113,6 @@ html:not([data-theme]) .theme-toggle { display: none; }
 .pub-bar .topbar__user { margin-left: auto; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-sm); }
 .page-public .content { --content-max: 100%; }
 .page-public .content > * { max-width: none; }
-.page-public .site-credit { margin-top: calc(-1 * var(--shell-gap) + var(--space-xs)); }
 .page-public .toast-region { top: auto; bottom: calc(var(--space-md) + env(safe-area-inset-bottom, 0px)); }
 .page-public .page-header { align-items: center; }
 

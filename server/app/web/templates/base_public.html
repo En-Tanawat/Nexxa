@@ -22,10 +22,6 @@
   <div class="page-progress" id="page-progress" role="progressbar" aria-hidden="true"></div>
   <a class="skip-link" href="#main">ข้ามไปยังเนื้อหาหลัก</a>
   {% block body %}{% endblock %}
-  {#- CC BY 4.0 attribution for the background photo, shown wherever it is (see static/img/CREDITS.md). #}
-  <footer class="site-credit">
-    <p class="site-credit__text">ภาพพื้นหลัง: <a href="https://commons.wikimedia.org/wiki/File:Fresh_green_leaves_background_(55060632960).jpg" rel="noopener noreferrer">AS Photography</a>, <a href="https://creativecommons.org/licenses/by/4.0/" rel="noopener noreferrer">CC BY 4.0</a> · ย่อและเบลอภาพ</p>
-  </footer>
   {% block toasts %}{{ c.toast_region(flash) }}{% endblock %}
   {%- block scripts %}{% endblock %}
 </body>
