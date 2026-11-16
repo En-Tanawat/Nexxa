@@ -20,6 +20,34 @@ const make = (tag, className, text) => {
 const clone = (id) => $(id).content.firstElementChild.cloneNode(true);
 
 const state = { summary: null, twin: null, trends: null, trendsAt: 0, fetchedAt: 0, error: null, timer: null, ticker: null, inflight: false };
+let twinInstance = null;
+
+async function syncTwin() {
+  const root = $("twin-root");
+  if (!root) return;
+  if (twinInstance) {
+    if (state.twin) twinInstance.update(state.twin);
+    return;
+  }
+  try {
+    const { mountTwin } = await import("./twin.js");
+    twinInstance = mountTwin(root, () => Promise.resolve(state.twin));
+  } catch (err) {
+    try {
+      const { createFallback } = await import("./twin-fallback.js");
+      const fb = createFallback(document);
+      root.replaceChildren(fb.el);
+      twinInstance = {
+        update(d) {
+          fb.update({ stations: d?.stations ?? [], layout: { width: 12, depth: 8, items: [] }, home: null, selectedId: null });
+        },
+      };
+      if (state.twin) twinInstance.update(state.twin);
+    } catch {
+      // Keep dashboard alive even if twin scripts fail
+    }
+  }
+}
 
 function badge(info) {
   const el = clone(`tpl-badge-${info.kind}`);
@@ -132,7 +160,10 @@ function render() {
     renderKpis(summary, yesterdayAbnormal(state.trends, summary.updated_at));
     renderLots(summary);
   }
-  if (twin) renderStations(twin, now);
+  if (twin) {
+    renderStations(twin, now);
+    syncTwin();
+  }
 }
 
 function schedule(ms) {

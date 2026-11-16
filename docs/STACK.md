@@ -1,14 +1,14 @@
 # NEXXA — Tech Stack
 
-อัปเดต: 2026-11-16 · สถานะ: ✅ ทำแล้ว · 🔧 กำลังทำ · 📋 วางแผน/ยังไม่ได้ทำ
+อัปเดต: 2026-11-16 ·
 เวอร์ชันแพ็กเกจอ่านจาก `server/requirements.txt` ตอนนี้ (ติดตั้งและเทสต์ผ่านกับเวอร์ชันเหล่านี้ ยังไม่ได้เทียบกับหน้า PyPI)
 
 ## 1. ภาพรวมสถาปัตยกรรม
 
 ```
-ESP32 DevKit V1 ─┐                        ┌─► Dashboard สาธารณะ (กราฟ + 3D)   📋
+ESP32 DevKit V1 ─┐                        ┌─► Dashboard สาธารณะ (กราฟ + 3D)   
  (รถ, RFID, IR,  │   Wi-Fi / HTTPS        │
-  เซนเซอร์)      ├──────────────►  FastAPI Server ──► หน้าแอดมิน (login + CRUD)  🔧
+  เซนเซอร์)      ├──────────────►  FastAPI Server ──► หน้าแอดมิน (login + CRUD)  
 ESP32-CAM ───────┘  X-Device-Key    │   │  │
                                     │   │  └─► OpenCV: กรองภาพ ✅
                                     │   └────► AI วิเคราะห์ภาพ ✅ (Claude / GPT / Gemini / Qwen / DeepSeek)

@@ -246,6 +246,10 @@ def _pairs(mode):
               ("login art text", col("--art-text"), _over(col("--art-scrim"), WHITE)),
               ("photo credit text", col("--color-muted-foreground"), panel),   # footer pill = strong glass
               ("photo credit link", col("--color-accent-strong"), panel)]
+    chip = _over(col("--glass-bg-strong"), card)  # the twin's station buttons and panels: strong glass on the card
+    pairs += [("twin scene label text", col("--twin-label-fg"), col("--twin-label-bg")),
+              ("twin station button text", col("--color-foreground"), chip),
+              ("twin station button status text", col("--color-subtle-foreground"), chip)]
     return pairs
 
 
@@ -258,6 +262,44 @@ def _ui_pairs(mode):
     panel = _over(col("--glass-bg-strong"), ground)
     return [(f"input border on {name}", col("--color-border"), _over(col("--input-bg"), surf))
             for name, surf in (("card", card), ("panel", panel))]
+
+
+TWIN_STATUSES = ["normal", "yellow", "brown", "review", "unknown"]
+
+
+def _twin_ui_pairs(mode):
+    """Non-text status markers of the 3D twin (WCAG 1.4.11, 3:1): the icon colour on the scene label it is drawn on, on the
+    station buttons next to the scene, and the selection / home markers on the greenhouse floor."""
+    t = _theme(mode)
+    col = lambda name: _color(t[name], t)  # noqa: E731
+    ground = _over(col("--bg-scrim"), BLACK if mode == "light" else WHITE)
+    card = _over(col("--glass-bg"), _over(col("--glass-bg-soft"), ground))
+    chip = _over(col("--glass-bg-strong"), card)
+    pairs = []
+    for status in TWIN_STATUSES:
+        mark = col(f"--twin-mark-{status}")
+        pairs += [(f"{status} mark on scene label", mark, col("--twin-label-bg")), (f"{status} mark on station button", mark, chip)]
+    pairs += [("selection ring on floor", col("--twin-select"), col("--twin-floor")), ("home marker on floor", col("--twin-home"), col("--twin-floor"))]
+    return pairs
+
+
+@pytest.mark.parametrize("mode", ["light", "dark"])
+def test_twin_status_markers_reach_3_to_1_and_labels_are_aa(mode):
+    pairs = _twin_ui_pairs(mode)
+    assert len(pairs) == 12
+    failures = [(name, round(contrast(fg, bg), 2)) for name, fg, bg in pairs if contrast(fg, bg) < 3]
+    assert not failures, failures
+    assert any(n == "twin scene label text" for n, _, _ in _pairs(mode))
+
+
+@pytest.mark.parametrize("mode", ["light", "dark"])
+def test_twin_status_marks_are_distinguishable_from_each_other(mode):
+    t = _theme(mode)
+    cols = [_color(t[f"--twin-mark-{s}"], t) for s in TWIN_STATUSES]
+    for i in range(len(cols)):
+        for j in range(i + 1, len(cols)):
+            dist = sum((cols[i][k] - cols[j][k]) ** 2 for k in range(3)) ** 0.5
+            assert dist >= 50, (TWIN_STATUSES[i], TWIN_STATUSES[j], round(dist))  # icons differ too: colour is never the only cue
 
 
 @pytest.mark.parametrize("mode", ["light", "dark"])

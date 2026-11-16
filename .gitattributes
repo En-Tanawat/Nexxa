@@ -1,0 +1,3 @@
+# Vendored library bytes must never be newline-converted (their SHA-256 is recorded in VENDOR.md and tested).
+*.min.js -text
+server/app/web/static/vendor/** -text

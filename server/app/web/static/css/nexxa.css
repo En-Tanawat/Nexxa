@@ -102,6 +102,35 @@
   --color-selection: rgba(34, 197, 94, 0.28);
   --color-focus-glow: rgba(21, 128, 61, 0.24);
 
+  /* 3D greenhouse twin (twin.js reads these at runtime and re-reads them when data-theme changes).
+     Scene label text >= 4.5:1 on its chip, status marks >= 3:1 on the chip / station buttons (tests/test_web_theme.py). */
+  --twin-sky-top: #CFE4D9;
+  --twin-sky-bottom: #EDF5E9;
+  --twin-ground: #D3E2CB;
+  --twin-floor: #BFD1B8;
+  --twin-floor-line: #9DB596;
+  --twin-soil: #5B4636;
+  --twin-tray: #8FA790;
+  --twin-frame: #5E7867;
+  --twin-net: #4F7A62;
+  --twin-light-sky: #F5FBF6;
+  --twin-light-ground: #A9BFA4;
+  --twin-sun: #FFF1D6;
+  --twin-label-bg: #FBFEFB;
+  --twin-label-fg: #10241A;
+  --twin-select: #0F5C2E;
+  --twin-home: #1D4ED8;
+  --twin-mark-normal: #15803D;
+  --twin-mark-yellow: #946C00;
+  --twin-mark-brown: #7A3B12;
+  --twin-mark-review: #C2410C;
+  --twin-mark-unknown: #5F7466;
+  --twin-plant-normal: #6DBE4B;
+  --twin-plant-yellow: #D8CC3C;
+  --twin-plant-brown: #8E5E32;
+  --twin-plant-review: #EE8F2C;
+  --twin-plant-unknown: #AAB5AE;
+
   --bg-scrim: rgba(236, 245, 238, 0.45);
   --glass-bg: rgba(255, 255, 255, 0.62);
   --glass-bg-soft: rgba(246, 251, 247, 0.62);
@@ -179,6 +208,34 @@
   --color-placeholder: #8EA897;
   --color-selection: rgba(74, 222, 128, 0.3);
   --color-focus-glow: rgba(134, 239, 172, 0.26);
+
+  /* 3D greenhouse twin: see the light block. */
+  --twin-sky-top: #06130B;
+  --twin-sky-bottom: #123022;
+  --twin-ground: #0C1F14;
+  --twin-floor: #173223;
+  --twin-floor-line: #2A4A37;
+  --twin-soil: #2A1F17;
+  --twin-tray: #3C5A47;
+  --twin-frame: #8DB59C;
+  --twin-net: #9CCDB0;
+  --twin-light-sky: #8CC7A5;
+  --twin-light-ground: #0F2518;
+  --twin-sun: #CFE7FF;
+  --twin-label-bg: #0D1F15;
+  --twin-label-fg: #E8F3EB;
+  --twin-select: #86EFAC;
+  --twin-home: #7DD3FC;
+  --twin-mark-normal: #4ADE80;
+  --twin-mark-yellow: #FACC15;
+  --twin-mark-brown: #D4A373;
+  --twin-mark-review: #FB923C;
+  --twin-mark-unknown: #9DB3A4;
+  --twin-plant-normal: #58B445;
+  --twin-plant-yellow: #CFC23A;
+  --twin-plant-brown: #8A5A33;
+  --twin-plant-review: #E88B2A;
+  --twin-plant-unknown: #8E9C94;
 
   --bg-scrim: rgba(5, 18, 11, 0.8);
   --glass-bg: rgba(24, 48, 34, 0.55);
@@ -935,6 +992,101 @@ html:not([data-theme]) .theme-toggle { display: none; }
   border: 1.5px dashed var(--color-border); border-radius: var(--radius-lg);
   background: linear-gradient(160deg, var(--color-accent-soft), transparent 60%), var(--color-deep);
 }
+/* 3D greenhouse twin (twin.js) and its 2D schematic (twin-fallback.js). The box keeps its size from placeholder to scene. */
+.twin-root[data-twin] { display: flex; flex-direction: column; place-items: stretch; padding: 0; border: 1px solid var(--divider); background: var(--color-deep); }
+.twin { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.twin__stage {
+  position: relative; flex: 1; min-height: 340px; overflow: hidden;
+  background: linear-gradient(180deg, var(--twin-sky-top) 0%, var(--twin-sky-bottom) 58%);
+}
+.twin__viewport, .twin__canvas, .twinsvg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.twin__canvas { cursor: grab; }
+.twin__canvas:active { cursor: grabbing; }
+.twin__canvas.is-pick { cursor: pointer; }
+.twin__loading {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 0.4rem 1rem; border-radius: var(--radius-full);
+  background: var(--glass-bg-strong); color: var(--color-foreground); font-size: var(--text-sm); box-shadow: var(--shadow-sm);
+}
+.twin__tools { position: absolute; top: var(--space-sm); right: var(--space-sm); display: flex; flex-direction: column; gap: 6px; }
+.twin__tool {
+  display: inline-grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  background: var(--glass-bg-strong); color: var(--color-foreground); box-shadow: var(--shadow-sm);
+  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.twin__tool--sm { width: 36px; height: 36px; flex-shrink: 0; }
+.twin__tool:hover { background: var(--btn-secondary-hover); }
+.twin__tool[aria-pressed="true"] { background: var(--color-accent-deep); border-color: var(--color-accent-deep); color: var(--color-on-accent); }
+.twin__tool:disabled { opacity: 0.55; cursor: not-allowed; }
+.twin__tool:focus-visible, .twin__chip:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; box-shadow: 0 0 0 5px var(--color-focus-glow); }
+.twin__panel {
+  position: absolute; left: var(--space-sm); bottom: var(--space-sm); width: min(21rem, calc(100% - 2 * var(--space-sm))); max-height: calc(100% - 2 * var(--space-sm)); overflow: auto;
+  padding: var(--space-md); border: 1px solid var(--color-border); border-radius: var(--radius-lg);
+  background: var(--glass-bg-strong); color: var(--color-foreground); box-shadow: var(--shadow-lg);
+}
+.twin__panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-sm); }
+.twin__panel-title { font-size: var(--text-base); font-weight: 700; line-height: 1.4; overflow-wrap: anywhere; }
+.twin__panel-status { display: flex; align-items: center; gap: 0.45rem; margin: var(--space-xs) 0 var(--space-sm); font-size: var(--text-sm); font-weight: 600; }
+.twin__panel-status[data-status="normal"] .icon, .twin__chip[data-status="normal"] .twin__mark { color: var(--twin-mark-normal); }
+.twin__panel-status[data-status="yellow"] .icon, .twin__chip[data-status="yellow"] .twin__mark { color: var(--twin-mark-yellow); }
+.twin__panel-status[data-status="brown"] .icon, .twin__chip[data-status="brown"] .twin__mark { color: var(--twin-mark-brown); }
+.twin__panel-status[data-status="review"] .icon, .twin__chip[data-status="review"] .twin__mark { color: var(--twin-mark-review); }
+.twin__panel-status[data-status="unknown"] .icon, .twin__chip[data-status="unknown"] .twin__mark { color: var(--twin-mark-unknown); }
+.twin__facts { display: grid; }
+.twin__fact { display: flex; justify-content: space-between; gap: var(--space-md); padding: 0.4rem 0; border-top: 1px solid var(--divider); font-size: var(--text-sm); }
+.twin__fact dt { color: var(--color-muted-foreground); flex-shrink: 0; }
+.twin__fact dd { font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+.twin__empty {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(26rem, calc(100% - 2rem)); padding: var(--space-lg); text-align: center;
+  border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--glass-bg-strong); box-shadow: var(--shadow-md);
+}
+.twin__empty-title { font-weight: 700; }
+.twin__empty-text { margin-top: var(--space-xs); font-size: var(--text-sm); color: var(--color-subtle-foreground); }
+.twin__note {
+  margin: var(--space-sm) var(--space-md) 0; padding: 0.5rem 0.8rem; border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  background: var(--glass-bg-strong); color: var(--color-subtle-foreground); font-size: var(--text-xs); line-height: 1.5;
+}
+.twin__hint { padding: var(--space-sm) var(--space-md) 0; font-size: var(--text-xs); color: var(--color-muted-foreground); }
+.twin__list-title { padding: var(--space-sm) var(--space-md) 0; font-size: var(--text-xs); font-weight: 700; color: var(--color-subtle-foreground); }
+.twin__list { list-style: none; margin: 0; padding: var(--space-xs) var(--space-md) var(--space-md); display: flex; flex-wrap: wrap; gap: 0.5rem; max-height: 9.5rem; overflow: auto; overscroll-behavior: contain; }
+.twin__list > li { display: flex; max-width: 100%; }
+.twin__chip {
+  display: inline-flex; align-items: center; gap: 0.5rem; max-width: 100%; min-height: 44px; padding: 0 0.9rem 0 0.7rem; text-align: left;
+  border: 1px solid var(--color-border); border-radius: var(--radius-full); background: var(--glass-bg-strong); color: var(--color-foreground);
+  transition: background-color var(--dur) var(--ease);
+}
+.twin__chip:hover { background: var(--btn-secondary-hover); }
+.twin__chip[aria-current="true"] { box-shadow: inset 0 0 0 2px var(--color-accent); }
+.twin__mark { display: inline-grid; flex-shrink: 0; }
+.twin__chip-name { min-width: 0; max-width: 13rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); font-weight: 700; }
+.twin__chip-status { flex-shrink: 0; font-size: var(--text-xs); color: var(--color-subtle-foreground); }
+
+/* The SVG schematic follows the theme through the same --twin-* tokens (no JavaScript needed on a theme change). */
+.twinsvg__floor { fill: var(--twin-floor); stroke: var(--twin-floor-line); stroke-width: 2; }
+.twinsvg__grid { stroke: var(--twin-floor-line); stroke-width: 1; opacity: 0.5; }
+.twinsvg__tray { fill: var(--twin-tray); stroke: var(--twin-frame); stroke-width: 1.5; }
+.twinsvg__plant { fill: var(--twin-plant-normal); }
+.twinsvg__st[data-status="yellow"] .twinsvg__plant { fill: var(--twin-plant-yellow); }
+.twinsvg__st[data-status="brown"] .twinsvg__plant { fill: var(--twin-plant-brown); }
+.twinsvg__st[data-status="review"] .twinsvg__plant { fill: var(--twin-plant-review); }
+.twinsvg__st[data-status="unknown"] .twinsvg__plant { fill: var(--twin-plant-unknown); }
+.twinsvg__hit { fill: transparent; cursor: pointer; }
+.twinsvg__chip-bg { fill: var(--twin-label-bg); stroke: var(--twin-mark-normal); stroke-width: 2.5; }
+.twinsvg__icon { fill: none; stroke: var(--twin-mark-normal); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.twinsvg__st[data-status="yellow"] .twinsvg__chip-bg { stroke: var(--twin-mark-yellow); }
+.twinsvg__st[data-status="yellow"] .twinsvg__icon { stroke: var(--twin-mark-yellow); }
+.twinsvg__st[data-status="brown"] .twinsvg__chip-bg { stroke: var(--twin-mark-brown); }
+.twinsvg__st[data-status="brown"] .twinsvg__icon { stroke: var(--twin-mark-brown); }
+.twinsvg__st[data-status="review"] .twinsvg__chip-bg { stroke: var(--twin-mark-review); }
+.twinsvg__st[data-status="review"] .twinsvg__icon { stroke: var(--twin-mark-review); }
+.twinsvg__st[data-status="unknown"] .twinsvg__chip-bg { stroke: var(--twin-mark-unknown); }
+.twinsvg__st[data-status="unknown"] .twinsvg__icon { stroke: var(--twin-mark-unknown); }
+.twinsvg__st.is-selected .twinsvg__chip-bg { stroke: var(--twin-select); stroke-width: 4.5; }
+.twinsvg__st.is-selected .twinsvg__tray { stroke: var(--twin-select); stroke-width: 3; }
+.twinsvg__name { fill: var(--twin-label-fg); font: 700 15px var(--font-sans); }
+.twinsvg__status { fill: var(--twin-label-fg); font: 600 12px var(--font-sans); }
+.twinsvg__home-ring { fill: var(--twin-home); opacity: 0.85; }
+.twinsvg__home .twinsvg__chip-bg { stroke: var(--twin-home); }
+.twinsvg__home .twinsvg__icon { stroke: var(--twin-home); }
 .twin-ph { display: grid; justify-items: center; gap: var(--space-sm); max-width: 44ch; text-align: center; }
 .twin-ph__art { width: min(100%, 360px); height: auto; margin-bottom: var(--space-sm); }
 .ph-floor { fill: var(--color-accent-soft); stroke: var(--color-border); stroke-width: 1.5; }
@@ -1036,12 +1188,16 @@ html:not([data-theme]) .theme-toggle { display: none; }
   .pub-nav { order: 3; width: 100%; }
   .pub-nav .nav__link { flex: 1; justify-content: center; }
   .twin-root { min-height: 320px; padding: var(--space-md); }
+  .twin__stage { min-height: 320px; }
+  .twin__list { max-height: 8.5rem; }
   .chart-box { height: 260px; }
   .trends-status { margin-left: 0; width: 100%; min-height: 0; }
   .trends-toolbar { padding: var(--space-md); }
 }
 @media (max-width: 479.98px) {
   .pub-bar .topbar__user { gap: var(--space-xs); }
+  .twin__panel { left: var(--space-xs); right: var(--space-xs); bottom: var(--space-xs); width: auto; max-height: 72%; }
+  .twin__chip-name { max-width: 9.5rem; }
   .kpi__top { flex-direction: column; align-items: flex-start; gap: var(--space-xs); }
   .seg { display: flex; width: 100%; }
   .seg__btn { flex: 1; min-width: 0; padding-inline: 0.5rem; }
@@ -1075,11 +1231,13 @@ html:not([data-theme]) .theme-toggle { display: none; }
     transition-duration: 0.01ms !important; scroll-behavior: auto !important;
   }
   .btn:hover, .btn--primary:hover, .card--link:hover, .card--link:hover .stat__go, .theme-toggle:active { transform: none; }
+  .twin__tool, .twin__chip { transition: none; }
 }
 
 @media (forced-colors: active) {
   .badge, .btn, .card, .input, .nav__link[aria-current="page"], .theme-toggle, .sidebar, .topbar, .content { border: 1px solid CanvasText; }
   .brand__tile { fill: none; stroke: CanvasText; }
+  .twin__tool, .twin__chip, .twin__panel, .twin__note, .twin__empty { border: 1px solid CanvasText; }
   .auth-split__art::after { background: Canvas; }
   .auth-split__photo { display: none; }
 }
