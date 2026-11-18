@@ -116,22 +116,10 @@ def found_count(facts: dict) -> int:
 
 
 def build_message(row: Summary) -> str:
-    """Plain Thai text: only ใบเหลือง / จุดน้ำตาล are listed (never a normal count), then the comparison, the trend and the text."""
+    """Plain Thai text: a title, then the AI's summary exactly as stored (same fixed layout as everywhere), then the link."""
     f = row.facts
-    delta = f["baseline"]["delta_pp"]
-    compare = "เทียบ 7 วันก่อน: " + ("เทียบไม่ได้" if delta is None else summaries._change(delta, "รอบนี้"))
-    if f["scope"] == "round":
-        title = f"NEXXA สรุปทั้งรอบ: รอบที่ {row.round_id}"
-        where = None
-        extra = ["สถานีที่แนวโน้ม 14 วันเพิ่มขึ้น: " + ", ".join(f["rising"])] if f["rising"] else []
-        if f["worst"]:
-            extra.insert(0, f"สถานีที่ผิดปกติสูงสุด: {f['worst']['station']}")
-    else:
-        title = f"NEXXA สรุปสถานี {f['station']} (รอบที่ {row.round_id})"
-        where = summaries._affected(f["angles"])
-        extra = [f"แนวโน้ม 14 วัน: {f['trend']['label']}"]
-    found = summaries._findings(f["counts"], where) if found_count(f) else "ไม่พบใบเหลืองหรือจุดน้ำตาล"
-    lines = [title, ("พบ " if found_count(f) else "") + found, compare, *extra, "", row.text.strip()[:2500]]  # the link below must survive the cap
+    title = f"NEXXA สรุปทั้งรอบ: รอบที่ {row.round_id}" if f["scope"] == "round" else f"NEXXA สรุปสถานี {f['station']} (รอบที่ {row.round_id})"
+    lines = [title, "", row.text.strip()[:2800]]  # the link below must survive the cap
     if link := public_url(row.round_id):
         lines += ["", f"ดูรายละเอียด: {link}"]
     return "\n".join(lines)[:MAX_CHARS]
@@ -161,8 +149,8 @@ def _notify(session: Session, round_id: int, station_id: int | None) -> None:
         return
     same = Summary.station_id.is_(None) if station_id is None else Summary.station_id == station_id
     row = session.scalars(select(Summary).where(Summary.round_id == round_id, same).order_by(Summary.id)).first()
-    if row is None or row.notified_at is not None or not cfg["round" if station_id is None else "station"]:
-        return
+    if row is None or row.source != "ai" or row.notified_at is not None or not cfg["round" if station_id is None else "station"]:
+        return  # only a summary the AI has written is announced (a pending one is announced when the retry fills it)
     if cfg["only_abnormal"] and not found_count(row.facts):
         return
     # claim before sending: a repeated robot call (or a second worker) sees notified_at and does nothing

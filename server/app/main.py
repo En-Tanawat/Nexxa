@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import logging
 import os
 import struct
@@ -13,10 +15,10 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import analyzer, robot, runtime_config, stats, storage, summaries, telegram
+from app import analyzer, robot, runtime_config, station_analysis, stats, storage, summaries, telegram
 from app.config import settings
 from app.db import engine, get_session, init_db
-from app.models import Analysis, Capture, Crop, Round, Station
+from app.models import Capture, Round, Station
 from app.quality import ImageDecodeError, check_quality, jpeg_decodes
 from app.seed import seed
 from app.web import deps, routes_admin, routes_auth, routes_keys, routes_public, routes_public_api, routes_telegram
@@ -41,6 +43,19 @@ def safe_rollup(session: Session, day: date | None = None, station_id: int | Non
             pass
 
 
+RETRY_PENDING_EVERY_S = 180  # summaries the AI could not write yet are asked for again this often (there is no manual button)
+
+
+async def _retry_pending_loop() -> None:
+    while True:
+        await asyncio.sleep(RETRY_PENDING_EVERY_S)
+        try:
+            for round_id, station_id in await run_in_threadpool(summaries.retry_pending):
+                await run_in_threadpool(telegram.notify, round_id, station_id)  # the first AI text is what gets announced
+        except Exception as e:
+            log.warning("pending summary retry failed: %s", type(e).__name__)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
@@ -49,7 +64,11 @@ async def lifespan(app: FastAPI):
         seed(s)
     with Session(engine) as s:
         safe_rollup(s)  # catch-up: fill days that have captures but no daily_stats yet
+    retry = asyncio.create_task(_retry_pending_loop())
     yield
+    retry.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await retry
 
 
 app = FastAPI(lifespan=lifespan)
@@ -76,9 +95,9 @@ async def block_debug_docs(request: Request, call_next):
     return await call_next(request)
 
 
-# No 'unsafe-inline': all CSS/JS are files under /static. When the three.js importmap lands, generate a
+# No 'unsafe-inline': all CSS/JS are files under /static. If an inline script is ever needed, generate a
 # per-request nonce in this middleware (request.state.csp_nonce), add 'nonce-<n>' to script-src and
-# put nonce="{{ request.state.csp_nonce }}" on that one <script type="importmap">.
+# put nonce="{{ request.state.csp_nonce }}" on that one inline <script>.
 CSP = "; ".join([
     "default-src 'self'",
     "script-src 'self'",
@@ -152,8 +171,8 @@ class RobotTelemetryInput(BaseModel):
     @field_validator("camera_angle")
     @classmethod
     def validate_camera_angle(cls, v):
-        if v is not None and v not in {"front", "right", "back", "left"}:
-            raise ValueError("camera_angle must be front, right, back, or left")
+        if v is not None and not robot.valid_angle(v):
+            raise ValueError("camera_angle must be a short lowercase name such as top, left, right")
         return v
 
     @field_validator("battery_pct")
@@ -280,9 +299,11 @@ def create_capture(
     except ImageDecodeError:
         raise HTTPException(422, "not an image")
 
+    if camera_angle is not None and not robot.valid_angle(camera_angle):
+        raise HTTPException(422, "camera_angle must be a short lowercase name such as top, left, right")
     same_angle = (Capture.round_id == round_id, Capture.station_id == station.id, Capture.camera_angle == camera_angle)
-    if session.scalar(select(Analysis.id).join(Capture, Analysis.capture_id == Capture.id).where(*same_angle).limit(1)):
-        raise HTTPException(409, "already analyzed")
+    if session.scalar(select(Capture.id).where(*same_angle, Capture.quality_ok.is_(True)).limit(1)):
+        raise HTTPException(409, "already captured")
     previous = session.scalars(select(Capture.quality_ok).where(*same_angle)).all()
     attempt = len(previous) + 1
     failed_attempt = previous.count(False) + 1  # retake budget counts quality failures only
@@ -302,23 +323,14 @@ def create_capture(
     day, capture_id, station_id = capture.taken_at.date(), capture.id, station.id
     capture.image_path = storage.save_image(data, round_id, station.id, capture.id)
 
-    label = confidence = None
-    if not quality.ok:
-        status = "retake" if failed_attempt <= settings.max_retakes else "needs_review"
-    else:
-        result = analyzer.analyze_leaf(data, session.get(Crop, station.crop_id))
-        session.add(Analysis(
-            capture_id=capture.id, label=result.label, confidence=result.confidence,
-            note=result.note, model=result.model, needs_review=result.needs_review,
-        ))
-        label, confidence = result.label, result.confidence
-        status = "needs_review" if result.needs_review else "analyzed"
+    # no AI call here: the station's photos are analysed together when the robot asks for the station summary
+    status = "stored" if quality.ok else "retake" if failed_attempt <= settings.max_retakes else "needs_review"
     session.commit()
     try:
         robot.robot.update_from_capture(session, round_id, station_id, camera_angle, quality.ok, status, attempt)
     except Exception:
         pass
-    body = {"capture_id": capture_id, "status": status, "label": label, "confidence": confidence, "attempt": attempt}
+    body = {"capture_id": capture_id, "status": status, "label": None, "confidence": None, "attempt": attempt}
     safe_rollup(session, day, station_id)  # one upsert for this day/station; failure is swallowed
     return body
 
@@ -328,14 +340,17 @@ RoundId = Annotated[int, Path(ge=1, le=2**31 - 1)]  # larger ids would overflow 
 
 def _summary_body(row, station_id: int | None) -> dict:
     """What the robot gets back. Key order matters: the firmware keeps only the first ~700 bytes, so `display` comes
-    first and the (Thai, 3 bytes per character) headline last. `display` is ASCII built from the facts, never from AI text."""
-    return {"ready": True, "display": summaries.display(row.facts), "source": row.source, "round_id": row.round_id,
+    first and the (Thai, 3 bytes per character) headline last. `display` is an ASCII read-out of the numbers (counts, deltas),
+    never AI text. `ready` is true once the AI has written the summary; until then (AI down) the headline is empty and the
+    server retries by itself."""
+    return {"ready": row.source == "ai", "display": summaries.display(row.facts), "source": row.source, "round_id": row.round_id,
             "station_id": station_id, "headline": summaries.device_headline(row.text)}
 
 
 @app.post("/rounds/{round_id}/stations/{rfid_uid}/summary", dependencies=[Depends(require_device_key)])
 def create_station_summary(round_id: RoundId, rfid_uid: str, background: BackgroundTasks, session: Session = Depends(get_session)):
-    """The robot waits for this before driving on. Template text is always made; the AI wording gets 25 s at most."""
+    """The robot waits for this before driving on. Analyses the station's photos (one AI call), then asks the AI for the
+    summary (25 s at most; if it cannot answer the summary stays pending and the server retries later)."""
     if session.get(Round, round_id) is None:
         raise HTTPException(404, "unknown round")
     station = session.scalar(select(Station).where(Station.rfid_uid == rfid_uid))
@@ -343,6 +358,8 @@ def create_station_summary(round_id: RoundId, rfid_uid: str, background: Backgro
         raise HTTPException(404, "unknown rfid_uid")
     if session.scalar(select(Capture.id).where(Capture.round_id == round_id, Capture.station_id == station.id).limit(1)) is None:
         raise HTTPException(409, "no capture for this station in this round")
+    analysis = station_analysis.run(session, round_id, station.id)  # one AI call over all of the station's photos
+    safe_rollup(session, analysis.created_at.date(), station.id)  # daily stats now count plants
     body = _summary_body(summaries.generate_station_summary(session, round_id, station.id), station.id)
     background.add_task(telegram.notify, round_id, station.id)  # after the response; sent once per summary
     return body
@@ -353,7 +370,7 @@ def finish_round(round_id: RoundId, background: BackgroundTasks, session: Sessio
     rnd = session.get(Round, round_id)
     if rnd is None:
         raise HTTPException(404, "unknown round")
-    summaries.ensure_station_summaries(session, round_id)  # any the robot skipped: template only
+    summaries.ensure_station_summaries(session, round_id)  # any the robot skipped: pending rows (the AI is asked later)
     row = summaries.generate_round_summary(session, round_id)
     rnd = session.get(Round, round_id)
     if rnd.status == "open":  # a seeded "demo" round keeps its status

@@ -9,6 +9,7 @@ shared between worker processes (shortcut: single process; use a shared store if
 """
 import math
 import threading
+import re
 import time
 
 from sqlalchemy import select
@@ -29,14 +30,18 @@ STATE_LABELS = {
 }
 
 ANGLE_LABELS = {
-    "front": "หน้า",
-    "right": "ขวา",
-    "back": "หลัง",
+    "top": "บน",
     "left": "ซ้าย",
+    "right": "ขวา",
 }
 
 VALID_STATES = {"idle", "moving", "inspecting", "analyzing", "summarizing", "returning", "docked", "error"}
-VALID_ANGLES = {"front", "right", "back", "left"}
+_ANGLE_RE = re.compile(r"[a-z][a-z0-9_]{0,15}\Z")
+
+
+def valid_angle(v: str | None) -> bool:
+    """Photo names are top / left / right today; any short lowercase name is accepted so a station can take more photos."""
+    return isinstance(v, str) and _ANGLE_RE.match(v) is not None
 
 FRAME_MIN_INTERVAL_S = 1  # minimum seconds between accepted frames
 FRAME_MAX_AGE_S = 60  # an older frame is not served and the camera counts as unavailable
@@ -86,7 +91,7 @@ class RobotMonitor:
                 self.round_id = data["round_id"]
             if "camera_angle" in data:
                 ang = data["camera_angle"]
-                self.camera_angle = ang if ang in VALID_ANGLES else None
+                self.camera_angle = ang if valid_angle(ang) else None
             if "step" in data and isinstance(data["step"], str):
                 self.step = data["step"]
             if "step_index" in data and data["step_index"] is not None:
@@ -179,7 +184,7 @@ class RobotMonitor:
         with self._lock:
             self.round_id = round_id
             self.station_id = station_id
-            self.camera_angle = camera_angle if camera_angle in VALID_ANGLES else camera_angle
+            self.camera_angle = camera_angle
 
             st_name = None
             if session:
@@ -199,9 +204,9 @@ class RobotMonitor:
                 self.step_index = 3
                 self.step = f"{st_display} {angle_disp} ภาพไม่ชัด กำลังถ่ายซ้ำ (ครั้งที่ {attempt})".strip()
             else:
-                self.state = "analyzing"
-                self.step_index = 4
-                self.step = f"{st_display} {angle_disp} AI กำลังวิเคราะห์ผล".strip()
+                self.state = "inspecting"
+                self.step_index = 3
+                self.step = f"{st_display} {angle_disp} บันทึกภาพแล้ว".strip()
 
             self.updated_at = time.time()
 

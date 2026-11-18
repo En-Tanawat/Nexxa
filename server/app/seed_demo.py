@@ -1,7 +1,7 @@
 """100-Day Season Demo Seed for NEXXA.
 
 Generates deterministic synthetic demo data across multiple days (default 100 days)
-simulating inspection rounds, camera captures from 4 angles, quality retakes,
+simulating inspection rounds, camera captures from 3 angles, quality retakes,
 and crop-age-dependent leaf disease diagnosis.
 Also provides a clean purge utility to remove demo records.
 """
@@ -21,9 +21,10 @@ from sqlalchemy import delete, func, not_, select
 from sqlalchemy.orm import Session
 
 from app import stats
-from app.models import Analysis, AppSetting, Batch, Capture, Crop, DailyStat, Round, Station, Summary
+from app.models import AppSetting, Batch, Capture, Crop, DailyStat, Round, Station, StationAnalysis, Summary
 
-ANGLES = ["front", "right", "back", "left"]
+ANGLES = ["top", "left", "right"]
+PLANTS_PER_STATION = (3, 9)  # demo: a station holds this many plants (fixed per station); the simulated AI counts the diseased ones
 DEMO_PREFIX = "demo://"
 DEMO_IMAGE_TPL = "demo://synthetic/{station_id}/{day}/{angle}.jpg"
 DEMO_IMAGE_ATTEMPT_TPL = "demo://synthetic/{station_id}/{day}/{angle}-attempt{attempt}.jpg"
@@ -237,6 +238,8 @@ def run(
     for b in created_batches:
         batches_by_station.setdefault(b.station_id, []).append(b)
 
+    plants = {st.id: rng.randint(*PLANTS_PER_STATION) for st in stations}  # same plants every day, like a real bed
+
     n_rounds = 0
     n_captures = 0
     n_analyses = 0
@@ -307,18 +310,6 @@ def run(
                     session.flush()
                     n_captures += 1
 
-                    # Analysis for retake capture
-                    lbl, conf, rev, note = _simulate_diagnosis(rng, crop_age)
-                    ana = Analysis(
-                        capture_id=c2.id,
-                        label=lbl,
-                        confidence=conf,
-                        note=note,
-                        model="synthetic-demo-v1",
-                        needs_review=rev,
-                    )
-                    session.add(ana)
-                    n_analyses += 1
                 else:
                     # Single successful capture
                     path = DEMO_IMAGE_TPL.format(
@@ -339,17 +330,15 @@ def run(
                     session.flush()
                     n_captures += 1
 
-                    lbl, conf, rev, note = _simulate_diagnosis(rng, crop_age)
-                    ana = Analysis(
-                        capture_id=c.id,
-                        label=lbl,
-                        confidence=conf,
-                        note=note,
-                        model="synthetic-demo-v1",
-                        needs_review=rev,
-                    )
-                    session.add(ana)
-                    n_analyses += 1
+            # one analysis per station visit: plants seen, and how many of them the simulated AI marks yellow / brown
+            diag = [_simulate_diagnosis(rng, crop_age) for _ in range(plants[station.id])]
+            session.add(StationAnalysis(
+                round_id=rnd.id, station_id=station.id, n_photos=len(ANGLES), n_total=plants[station.id],
+                n_yellow=sum(d[0] == "ใบเหลือง" for d in diag), n_brown=sum(d[0] == "จุดน้ำตาล" for d in diag),
+                confidence=round(sum(d[1] for d in diag) / len(diag), 2), note=None, model="synthetic-demo-v1",
+                needs_review=any(d[2] for d in diag), created_at=round_dt + timedelta(seconds=sec_offset + 10)))
+            n_analyses += 1
+        session.flush()
 
         # Populate daily_stats for this day
         stats.rollup(session, cur_day)
@@ -383,22 +372,15 @@ def clear(session: Session) -> dict:
         select(Capture.id).where(Capture.image_path.startswith(DEMO_PREFIX))
     ).all()
 
-    # Find analyses for demo captures
-    demo_analyses = (
-        session.scalars(select(Analysis.id).where(Analysis.capture_id.in_(demo_cap_ids))).all()
-        if demo_cap_ids
-        else []
-    )
-    if demo_analyses:
-        session.execute(delete(Analysis).where(Analysis.id.in_(demo_analyses)))
-
     if demo_cap_ids:
         session.execute(delete(Capture).where(Capture.id.in_(demo_cap_ids)))
 
     # Find demo rounds
     demo_round_ids = session.scalars(select(Round.id).where(Round.status == "demo")).all()
+    n_analyses = 0
     if demo_round_ids:
         session.execute(delete(Summary).where(Summary.round_id.in_(demo_round_ids)))
+        n_analyses = session.execute(delete(StationAnalysis).where(StationAnalysis.round_id.in_(demo_round_ids))).rowcount
         session.execute(delete(Round).where(Round.id.in_(demo_round_ids)))
 
     # Find demo batches
@@ -445,7 +427,7 @@ def clear(session: Session) -> dict:
 
     return {
         "captures": len(demo_cap_ids),
-        "analyses": len(demo_analyses),
+        "analyses": n_analyses,
         "rounds": len(demo_round_ids),
         "batches": len(demo_batches),
         "daily_stats": n_del_stats,

@@ -13,7 +13,6 @@ const make = (tag, className, text) => {
 const clone = (id) => $(id).content.firstElementChild.cloneNode(true);
 
 const LABEL_KIND = { "ปกติ": "ok", "ใบเหลือง": "warn", "จุดน้ำตาล": "danger" };
-const ANGLES = [["front", "หน้า"], ["right", "ขวา"], ["back", "หลัง"], ["left", "ซ้าย"]];
 const STATUS = { done: ["ok", "เสร็จสิ้น"], open: ["info", "กำลังตรวจ"], demo: ["neutral", "ข้อมูลตัวอย่าง"] };
 const TREND = { increase: ["up", "bad"], decrease: ["down", "good"], flat: ["flat", "neutral"], insufficient: ["none", "neutral"] };
 const ppFmt = new Intl.NumberFormat("th-TH", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
@@ -43,12 +42,12 @@ function changeEl(pp) {
 
 function paragraphs(el, text) {
   const lines = String(text ?? "").split("\n").filter((l) => l.trim());
-  el.replaceChildren(...lines.map((l) => make("p", "", l)));
+  el.replaceChildren(...(lines.length ? lines : ["AI กำลังสรุป ระบบจะลองใหม่เองอัตโนมัติ"]).map((l) => make("p", "", l)));
 }
 
 function sourceLine(el, summary) {
   const ai = summary.source === "ai";
-  el.replaceChildren(badge(ai ? "info" : "neutral", ai ? "สรุปโดย AI" : "สรุปอัตโนมัติ"), make("span", "", `อัปเดต ${fmtDateTime(summary.updated_at)}`));
+  el.replaceChildren(badge(ai ? "info" : "neutral", ai ? "สรุปโดย AI" : "รอ AI สรุป"), make("span", "", `อัปเดต ${fmtDateTime(summary.updated_at)}`));
 }
 
 function addFact(dl, label, ...nodes) {
@@ -89,24 +88,6 @@ async function loadList() {
 }
 
 // ---- detail ------------------------------------------------------------------------------------------
-/** Only the angles with a finding (ใบเหลือง / จุดน้ำตาล) or no usable result get a chip; "ปกติ" is never listed. */
-function angleChips(ul, angles) {
-  const chips = ANGLES.flatMap(([key, th]) => {
-    const a = angles?.[key];
-    let b;
-    if (!a) b = badge("neutral", "ตรวจไม่ได้");
-    else if (a.needs_review || !(a.label in LABEL_KIND)) b = badge("info", "รอตรวจทาน");
-    else if (a.label === "ปกติ") return [];
-    else b = badge(LABEL_KIND[a.label], isNum(a.confidence) ? `${a.label} ${fmtPct(a.confidence, 0)}` : a.label);
-    const li = clone("tpl-angle");
-    li.querySelector(".angle-chip__name").textContent = `มุม${th}`;
-    li.querySelector("[data-slot=badge]").replaceWith(b);
-    return [li];
-  });
-  ul.hidden = chips.length === 0;
-  ul.replaceChildren(...chips);
-}
-
 function comparisonFacts(dl, f) {
   addFact(dl, "อัตราผิดปกติรอบนี้", fmtPct(f.abnormal_rate));
   const b = f.baseline;
@@ -122,14 +103,12 @@ function stationCard(s) {
   if (!s.summary || !f) {
     q("meta").textContent = "ยังไม่มีสรุป";
     q("src").hidden = true;
-    q("angles").hidden = true;
     q("facts").hidden = true;
     paragraphs(q("text"), "ยังไม่มีสรุปของสถานีนี้ อาจกำลังสร้างอยู่ ลองโหลดหน้านี้ใหม่ภายหลัง");
     return card;
   }
-  q("meta").textContent = `ตรวจได้ ${fmtInt(f.present.length)} จาก 4 มุม`;
+  q("meta").textContent = `ถ่ายได้ ${fmtInt(f.present.length)} จาก ${fmtInt(f.expected ?? 3)} รูป`;
   sourceLine(q("src"), s.summary);
-  angleChips(q("angles"), f.angles);
   const dl = q("facts");
   comparisonFacts(dl, f);
   const [dir, tone] = TREND[f.trend.direction] ?? TREND.insufficient;

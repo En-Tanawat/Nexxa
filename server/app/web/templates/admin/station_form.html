@@ -28,11 +28,9 @@
   </div>
   {% endcall %}
 
-  {% call c.card("ตำแหน่งบนเส้นทาง", subtitle="ใช้เรียงลำดับและแสดงบนแผนที่ (ไม่บังคับ)", icon="activity") %}
+  {% call c.card("ตำแหน่งบนเส้นทาง", subtitle="ใช้เรียงลำดับสถานีบนเส้นทาง (ไม่บังคับ)", icon="activity") %}
   <div class="form-grid form-grid--3">
     {{ c.field("route_order", "ลำดับในเส้นทาง", type="number", value=values["route_order"], error=errors.get("route_order"), attrs={"min": 0, "max": 9999, "step": 1, "inputmode": "numeric"}) }}
-    {{ c.field("map_x", "ตำแหน่ง X", type="number", value=values["map_x"], error=errors.get("map_x"), attrs={"step": "any", "inputmode": "decimal"}) }}
-    {{ c.field("map_y", "ตำแหน่ง Y", type="number", value=values["map_y"], error=errors.get("map_y"), attrs={"step": "any", "inputmode": "decimal"}) }}
   </div>
   {% endcall %}
 

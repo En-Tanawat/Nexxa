@@ -10,16 +10,19 @@ from datetime import date, timedelta
 
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Path, Request
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, Path, Request
+from fastapi import HTTPException
+from fastapi.responses import RedirectResponse, Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import seed_demo, summaries
+from pathlib import Path as FsPath
+
+from app import seed_demo, storage, summaries
 from app.create_admin import MIN_PASSWORD_LEN
 from app.db import get_session
-from app.models import (AdminUser, AppSetting, AuditLog, Batch, Capture, Crop, DailyStat, DeviceKey, ProviderKey, Round, Station, Summary)
+from app.models import (AdminUser, AppSetting, AuditLog, Batch, Capture, Crop, DailyStat, DeviceKey, ProviderKey, Round, Station, StationAnalysis, Summary)
 from app.robot import robot as robot_monitor
 from app.web import audit, deps, secretbox, security
 from app.web.templating import render
@@ -174,17 +177,16 @@ def admin_home(request: Request, session: Session = Depends(get_session)):
 
 # --- stations ---------------------------------------------------------------------------
 
-STATION_KEYS = ("rfid_uid", "name", "description", "kind", "crop_id", "route_order", "map_x", "map_y", "active")
+STATION_KEYS = ("rfid_uid", "name", "description", "kind", "crop_id", "route_order", "active")
 STATION_DEFAULTS = {"rfid_uid": "", "name": "", "description": "", "kind": "station", "crop_id": "", "route_order": "",
-                    "map_x": "", "map_y": "", "active": "1"}
+                    "active": "1"}
 RFID_RE = re.compile(r"[A-Za-z0-9:_.\-]+")
 
 
 def _station_values(st: Station) -> dict[str, str]:
     show = lambda v: "" if v is None else str(v)  # noqa: E731
     return {"rfid_uid": st.rfid_uid, "name": st.name, "description": show(st.description), "kind": st.kind,
-            "crop_id": show(st.crop_id), "route_order": show(st.route_order), "map_x": show(st.map_x),
-            "map_y": show(st.map_y), "active": "1" if st.active else "0"}
+            "crop_id": show(st.crop_id), "route_order": show(st.route_order), "active": "1" if st.active else "0"}
 
 
 def _station_clean(session: Session, f: dict[str, str], st: Station | None) -> tuple[dict, dict]:
@@ -211,8 +213,6 @@ def _station_clean(session: Session, f: dict[str, str], st: Station | None) -> t
         "rfid_uid": rfid, "name": name, "description": description or None, "kind": kind,
         "crop_id": crop.id if crop else None,
         "route_order": _num(e, "route_order", f["route_order"], "ลำดับเส้นทาง", 0, 9999, integer=True),
-        "map_x": _num(e, "map_x", f["map_x"], "ตำแหน่ง X", -100000, 100000),
-        "map_y": _num(e, "map_y", f["map_y"], "ตำแหน่ง Y", -100000, 100000),
         "active": f["active"] == "1",
     }
     return clean, e
@@ -773,20 +773,42 @@ def robot_page(request: Request, session: Session = Depends(get_session)):
     )
 
 
-@router.post("/rounds/{round_id}/summary", dependencies=[*CSRF, Depends(deps.require_permission("robot", "update"))])
-def round_summary_regenerate(
-    request: Request,
-    round_id: Id,
-    background: BackgroundTasks,
-    admin: AdminUser = Depends(deps.require_permission("robot", "update")),
-    session: Session = Depends(get_session),
-):
-    if session.get(Round, round_id) is None:
-        return _missing(request)
-    audit.record(session, admin.username, "summary.regenerate", f"รอบที่ {round_id}", "สร้างสรุปรายสถานีและทั้งรอบใหม่ (ใช้ AI ถ้าตั้งค่าไว้)")
-    session.commit()
-    background.add_task(summaries.regenerate_round, round_id)  # AI calls can take a while: not inside the request
-    return _done(request, "/admin/robot", f"กำลังสร้างสรุปรอบที่ {round_id} ใหม่ โหลดหน้านี้ใหม่ในอีกสักครู่")
+def _round_photos(session: Session, round_id: int) -> list[dict]:
+    """Per station of a round: what the AI was given and answered, with an image URL per photo."""
+    rows = session.execute(
+        select(StationAnalysis, Station.name).join(Station, StationAnalysis.station_id == Station.id)
+        .where(StationAnalysis.round_id == round_id).order_by(Station.route_order, Station.id)).all()
+    if not rows and session.get(Round, round_id) is None:
+        raise HTTPException(404, "unknown round")
+    return [{
+        "station_id": a.station_id, "station": name, "yellow": a.n_yellow, "brown": a.n_brown, "total": a.n_total,
+        "needs_review": a.needs_review, "note": a.note, "model": a.model, "analysed_at": a.created_at.isoformat(),
+        "photos": [{"capture_id": p["capture_id"], "angle": p["angle"], "url": f"/admin/captures/{p['capture_id']}/image"}
+                   for p in a.photos or []],
+    } for a, name in rows]
+
+
+@router.get("/rounds/{round_id}/photos", dependencies=[Depends(deps.require_permission("robot", "read"))])
+def round_photos(round_id: Id, session: Session = Depends(get_session)):
+    return {"round_id": round_id, "stations": _round_photos(session, round_id)}
+
+
+@router.get("/rounds/{round_id}", dependencies=[Depends(deps.require_permission("robot", "read"))])
+def round_page(request: Request, round_id: Id, session: Session = Depends(get_session)):
+    return render(request, "admin/round_photos.html", round_id=round_id, stations=_round_photos(session, round_id),
+                  angle_th={"top": "บน", "left": "ซ้าย", "right": "ขวา"})
+
+
+@router.get("/captures/{capture_id}/image", dependencies=[Depends(deps.require_permission("robot", "read"))])
+def capture_image(capture_id: Id, session: Session = Depends(get_session)):
+    """The stored photo, only from inside the image directory (the path comes from the database, never from the URL)."""
+    cap = session.get(Capture, capture_id)
+    path = FsPath(cap.image_path).resolve() if cap else None
+    if path is None or storage.settings.image_dir.resolve() not in path.parents or not path.is_file():
+        raise HTTPException(404, "image not available")  # also after a host restart wiped the files
+    data = path.read_bytes()
+    kind = "image/png" if data.startswith(b"\x89PNG") else "image/jpeg"
+    return Response(data, media_type=kind, headers={"Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff"})
 
 
 @router.post("/robot/simulate", dependencies=[*CSRF, Depends(deps.require_permission("robot", "update"))])
@@ -825,19 +847,8 @@ def robot_reset(
 
 # --- settings & demo data ----------------------------------------------------------
 
-SETTING_KEYS = ("robot_name", "greenhouse_name", "greenhouse_location", "alert_email")
-
-
 @router.get("/settings", dependencies=[Depends(deps.require_permission("setting", "read"))])
 def settings_page(request: Request, session: Session = Depends(get_session)):
-    settings_rows = session.scalars(select(AppSetting).where(AppSetting.key.in_(SETTING_KEYS))).all()
-    stored = {row.key: row.value for row in settings_rows}
-    values = {
-        "robot_name": stored.get("robot_name") or "ESP32-CAM Rover Alpha",
-        "greenhouse_name": stored.get("greenhouse_name") or "โรงเรือนทดลอง NEXXA",
-        "greenhouse_location": stored.get("greenhouse_location") or "อาคารวิจัยการเกษตรอัจฉริยะ",
-        "alert_email": stored.get("alert_email") or "",
-    }
     count = session.scalar
     sys_stats = {
         "stations": count(select(func.count(Station.id))),
@@ -847,51 +858,7 @@ def settings_page(request: Request, session: Session = Depends(get_session)):
         "ai_keys": count(select(func.count(ProviderKey.id))),
         "devices": count(select(func.count(DeviceKey.id))),
     }
-    return render(request, "admin/settings.html", values=values, errors={}, sys_stats=sys_stats)
-
-
-@router.post("/settings", dependencies=[*CSRF, Depends(deps.require_permission("setting", "update"))])
-def settings_save(
-    request: Request,
-    f: dict = _fields(*SETTING_KEYS),
-    admin: AdminUser = Depends(deps.require_permission("setting", "update")),
-    session: Session = Depends(get_session),
-):
-    e: dict[str, str] = {}
-    _text(e, "robot_name", f.get("robot_name", ""), "ชื่อหุ่นยนต์", 100, required=False)
-    _text(e, "greenhouse_name", f.get("greenhouse_name", ""), "ชื่อโรงเรือน", 100, required=False)
-    _text(e, "greenhouse_location", f.get("greenhouse_location", ""), "ที่ตั้งโรงเรือน", 200, required=False)
-    email = f.get("alert_email", "").strip()
-    if email and "@" not in email:
-        e["alert_email"] = "รูปแบบอีเมลไม่ถูกต้อง"
-
-    if e:
-        count = session.scalar
-        sys_stats = {
-            "stations": count(select(func.count(Station.id))),
-            "batches": count(select(func.count(Batch.id))),
-            "crops": count(select(func.count(Crop.id))),
-            "captures": count(select(func.count(Capture.id))),
-            "ai_keys": count(select(func.count(ProviderKey.id))),
-            "devices": count(select(func.count(DeviceKey.id))),
-        }
-        return render(request, "admin/settings.html", status_code=422, values=f, errors=e, sys_stats=sys_stats)
-
-    for k in SETTING_KEYS:
-        val = f.get(k, "").strip()
-        row = session.get(AppSetting, k)
-        if not val:
-            if row:
-                session.delete(row)
-        else:
-            if row is None:
-                session.add(AppSetting(key=k, value=val))
-            else:
-                row.value = val
-
-    audit.record(session, admin.username, "setting.update", "settings", "บันทึกการตั้งค่าระบบ")
-    session.commit()
-    return _done(request, "/admin/settings", "บันทึกการตั้งค่าระบบแล้ว")
+    return render(request, "admin/settings.html", sys_stats=sys_stats)
 
 
 @router.post("/settings/seed-demo", dependencies=[*CSRF, Depends(deps.require_permission("setting", "update"))])

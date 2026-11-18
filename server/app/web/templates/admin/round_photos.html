@@ -1,0 +1,29 @@
+{%- extends "base_admin.html" -%}
+{%- set active = "robot" -%}
+{% block title %}รูปที่ใช้วิเคราะห์ รอบที่ {{ round_id }}{% endblock %}
+{% block content %}
+{{ c.page_header("รูปที่ใช้วิเคราะห์ รอบที่ " ~ round_id, eyebrow="หุ่นยนต์ ESP32", text="รูปรวมของแต่ละสถานีที่ส่งให้ AI พร้อมกัน และจำนวนต้นที่ AI นับได้ว่าเป็นโรค (ไม่แสดงจำนวนต้นปกติ) รูปเก็บเป็นไฟล์บนเซิร์ฟเวอร์ ถ้าเซิร์ฟเวอร์รีสตาร์ตรูปอาจหายไป") }}
+
+{%- if not stations %}
+<p class="muted">รอบนี้ยังไม่มีผลวิเคราะห์ของสถานีใด (หุ่นยนต์ยังไม่ได้ขอสรุปสถานี)</p>
+{%- endif %}
+{%- for s in stations %}
+{% call c.card(s.station, subtitle=("ใบเหลือง " ~ s.yellow ~ " ต้น · จุดน้ำตาล " ~ s.brown ~ " ต้น (จากผักที่ตรวจ " ~ s.total ~ " ต้น)") if s.total is not none else "AI ยังวิเคราะห์ไม่สำเร็จ ไม่มีจำนวนต้น", icon="station") %}
+  {%- if s.needs_review %}<p>{{ c.badge("warn", "ควรตรวจทาน") }}</p>{% endif %}
+  {%- if s.note %}<p class="muted">{{ s.note }}</p>{% endif %}
+  {%- if s.photos %}
+  <ul class="photo-grid" role="list">
+    {%- for p in s.photos %}
+    <li><figure>
+      <img src="{{ p.url }}" alt="รูปสถานี {{ s.station }} มุม{{ angle_th.get(p.angle, p.angle or '-') }}" loading="lazy" width="320" height="240">
+      <figcaption>มุม{{ angle_th.get(p.angle, p.angle or "-") }}</figcaption>
+    </figure></li>
+    {%- endfor %}
+  </ul>
+  {%- else %}
+  <p class="muted">ไม่มีรูปที่บันทึกไว้สำหรับสถานีนี้</p>
+  {%- endif %}
+{% endcall %}
+{%- endfor %}
+<p><a class="back-link" href="/admin/robot">กลับหน้าหุ่นยนต์</a></p>
+{% endblock %}

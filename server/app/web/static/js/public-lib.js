@@ -101,14 +101,6 @@ export function harvestInfo(daysLeft) {
   return { kind: daysLeft <= 2 ? "warn" : "info", text: `อีก ${fmtInt(daysLeft)} วัน` };
 }
 
-export function activityFeed(stations, nowMs, limit = 6) {
-  return (Array.isArray(stations) ? stations : [])
-    .filter((s) => !Number.isNaN(parseTime(s?.last_seen_at)))
-    .sort((a, b) => parseTime(b.last_seen_at) - parseTime(a.last_seen_at))
-    .slice(0, limit)
-    .map((s) => ({ id: s.id, name: s.name, status: s.status, badge: statusInfo(s.status), seenAt: s.last_seen_at, when: relativeTime(s.last_seen_at, nowMs) }));
-}
-
 /** Thai message for a failed fetch (see getJson); never echoes a response body. */
 export function errorMessage(err) {
   if (err?.offline) return "ไม่มีการเชื่อมต่ออินเทอร์เน็ต กำลังแสดงข้อมูลล่าสุดที่โหลดไว้";

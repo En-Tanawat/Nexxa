@@ -1,7 +1,10 @@
 """Per-station and per-round inspection summaries: facts from the database, deterministic Thai text, optional AI wording.
 
-The template text (render_text) is always produced and is the fallback; ai_narrate only rewrites it from the same facts
-(text only, no images) and returns None on any problem. Numbers come from the facts, never from the model.
+Every summary sentence is written by the AI (and only the AI), from records retrieved from the database (retrieve():
+this visit, earlier visits, the lot's daily history, the 7/14-day baseline). The AI must answer a fixed JSON shape
+(result / compare / trend / advice) that render_summary() lays out the same way every time, and an answer that uses a
+number which is not in the retrieved records is rejected. When the AI is unavailable the row is stored as "pending"
+(facts only, empty text) and retry_pending() fills it in later: there is no code-written fallback text.
 Day boundaries are UTC, like stats.py.
 """
 import json
@@ -18,20 +21,17 @@ from sqlalchemy.orm import Session
 
 import app.db
 from app import runtime_config, stats
+from app.analyzer import _first_json_object
 from app.config import settings
-from app.models import Analysis, Batch, Capture, DailyStat, Round, Station, Summary
+from app.models import Batch, Capture, DailyStat, Round, Station, StationAnalysis, Summary
 from app.providers import get_provider
 
 log = logging.getLogger(__name__)
 
-ANGLES = ("front", "right", "back", "left")
-ANGLE_TH = {"front": "หน้า", "right": "ขวา", "back": "หลัง", "left": "ซ้าย"}
 BASELINE_DAYS, TREND_DAYS = 7, 14
 TREND_MIN_DAYS = 3  # fewer days with data than this in the trend window: "ข้อมูลไม่พอ"
 TREND_PP = 5.0  # first-7 vs last-7 change that counts as a trend (percentage points)
-ALERT_RATE = 0.3  # abnormal rate from which the template advice says "check by hand"
-AI_BUDGET_S = 25  # hard cap for the whole optional AI call; the template text is used after that
-AI_MAX_CHARS = 1500
+AI_BUDGET_S = 25  # hard cap for the AI call; after that the summary stays pending and is retried later
 TREND_LABELS = {"increase": "เพิ่มขึ้น", "decrease": "ลดลง", "flat": "ทรงตัว", "insufficient": "ข้อมูลไม่พอ"}
 
 
@@ -91,30 +91,20 @@ def headline(text: str) -> str:
 
 # --- facts ------------------------------------------------------------------------------------
 
-def _angle_results(session: Session, round_id: int, station_id: int) -> tuple[dict, int, datetime | None]:
-    """Per angle the latest usable capture (quality_ok not False) and its latest analysis; plus the quality-failure count."""
+def _station_result(session: Session, round_id: int, station_id: int) -> dict:
+    """What one station visit found: plant counts from its (single) analysis, plus photo bookkeeping."""
     caps = session.execute(
         select(Capture.id, Capture.camera_angle, Capture.quality_ok, Capture.taken_at)
         .where(Capture.round_id == round_id, Capture.station_id == station_id).order_by(Capture.id)).all()
-    latest = {}  # capture_id -> newest analysis (ascending id, later rows overwrite)
-    for a in session.scalars(select(Analysis).where(Analysis.capture_id.in_([c.id for c in caps])).order_by(Analysis.id)):
-        latest[a.capture_id] = a
-    usable = {c.camera_angle: c for c in caps if c.camera_angle in ANGLES and c.quality_ok is not False}
-    angles = {}
-    for ang in ANGLES:
-        c = usable.get(ang)
-        a = latest.get(c.id) if c else None
-        angles[ang] = None if c is None else {
-            "label": a.label if a else None, "confidence": a.confidence if a else None, "needs_review": bool(a and a.needs_review)}
-    return angles, sum(1 for c in caps if c.quality_ok is False), max((c.taken_at for c in caps), default=None)
-
-
-def _counts(angles: dict) -> dict:
+    usable = {c.camera_angle or f"#{c.id}": c for c in caps if c.quality_ok is not False}
+    an = session.scalars(select(StationAnalysis).where(
+        StationAnalysis.round_id == round_id, StationAnalysis.station_id == station_id).order_by(StationAnalysis.id.desc()).limit(1)).first()
     counts = {stats.NORMAL: 0, stats.YELLOW: 0, stats.BROWN: 0}
-    for a in angles.values():
-        if a and a["label"] in counts:
-            counts[a["label"]] += 1
-    return counts
+    if an is not None and an.n_total is not None:
+        counts = {stats.NORMAL: an.n_total - an.n_yellow - an.n_brown, stats.YELLOW: an.n_yellow, stats.BROWN: an.n_brown}
+    return {"counts": counts, "present": list(usable),
+            "retakes": sum(1 for c in caps if c.quality_ok is False), "last_at": max((c.taken_at for c in caps), default=None),
+            "needs_review": int(an is not None and an.needs_review)}
 
 
 def _rate_of(counts: dict) -> float | None:
@@ -124,8 +114,8 @@ def _rate_of(counts: dict) -> float | None:
 def station_facts(session: Session, round_id: int, station_id: int) -> dict:
     station, rnd = session.get(Station, station_id), session.get(Round, round_id)
     day = _utc_day(rnd.started_at)
-    angles, retakes, _ = _angle_results(session, round_id, station_id)
-    counts = _counts(angles)
+    res = _station_result(session, round_id, station_id)
+    counts, expected = res["counts"], settings.photos_per_station
     rate = _rate_of(counts)
 
     rows = session.execute(
@@ -137,7 +127,7 @@ def station_facts(session: Session, round_id: int, station_id: int) -> dict:
     previous = None
     prev_id = session.scalar(select(func.max(Capture.round_id)).where(Capture.station_id == station_id, Capture.round_id < round_id))
     if prev_id is not None:
-        prev_counts = _counts(_angle_results(session, prev_id, station_id)[0])
+        prev_counts = _station_result(session, prev_id, station_id)["counts"]
         prev_rate = _rate_of(prev_counts)
         previous = {"round_id": prev_id, "day": _utc_day(session.get(Round, prev_id).started_at).isoformat(),
                     "abnormal_rate": prev_rate, "delta_pp": _pp(rate, prev_rate), "counts": prev_counts}
@@ -151,9 +141,9 @@ def station_facts(session: Session, round_id: int, station_id: int) -> dict:
     return {
         "scope": "station", "round_id": round_id, "station_id": station_id, "station": station.name, "route_order": station.route_order,
         "day": day.isoformat(),
-        "angles": angles, "counts": counts, "labelled": sum(counts.values()),
-        "present": [a for a in ANGLES if angles[a]], "missing": [a for a in ANGLES if not angles[a]],
-        "retakes": retakes, "needs_review": sum(1 for a in angles.values() if a and a["needs_review"]),
+        "counts": counts, "labelled": sum(counts.values()),  # counts are PLANTS; labelled = plants the AI saw
+        "present": res["present"], "expected": expected, "missing": max(0, expected - len(res["present"])),
+        "retakes": res["retakes"], "needs_review": res["needs_review"],
         "abnormal_rate": rate, "baseline": baseline, "trend": trend, "previous_visit": previous, "batch": batch,
     }
 
@@ -183,7 +173,7 @@ def round_facts(session: Session, round_id: int) -> dict:
         base_n += f["baseline"]["labelled"]
         base_abn += f["baseline"]["abnormal"]
         review += f["needs_review"]
-        last_at = max(filter(None, [last_at, _angle_results(session, round_id, sid)[2]]), default=None)
+        last_at = max(filter(None, [last_at, _station_result(session, round_id, sid)["last_at"]]), default=None)
         rows.append({"station_id": sid, "station": f["station"], "route_order": f["route_order"], "present": len(f["present"]), "missing": f["missing"],
                      "abnormal_rate": f["abnormal_rate"], "delta_pp": f["baseline"]["delta_pp"], "trend": f["trend"]["direction"]})
     rate = _rate_of(total)
@@ -191,10 +181,10 @@ def round_facts(session: Session, round_id: int) -> dict:
     ranked = [r for r in rows if r["abnormal_rate"]]
     worst = max(ranked, key=lambda r: r["abnormal_rate"], default=None)
     seen = {r["station_id"]: r["present"] for r in rows}
-    skipped = [{"station": names[s], "present": seen.get(s, 0)} for s in sorted(expected, key=order.get) if seen.get(s, 0) < len(ANGLES)]
+    skipped = [{"station": names[s], "present": seen.get(s, 0)} for s in sorted(expected, key=order.get) if seen.get(s, 0) < settings.photos_per_station]
     minutes = None if last_at is None else max(0, round((_naive_utc(last_at) - _naive_utc(rnd.started_at)).total_seconds() / 60))
     return {
-        "scope": "round", "round_id": round_id, "day": _utc_day(rnd.started_at).isoformat(),
+        "scope": "round", "round_id": round_id, "day": _utc_day(rnd.started_at).isoformat(), "photos_expected": settings.photos_per_station,
         "stations_inspected": len(rows), "stations_expected": len(expected), "stations": rows, "counts": total,
         "labelled": sum(total.values()), "abnormal_rate": rate, "needs_review": review,
         "baseline": {"labelled": base_n, "rate": base_rate, "delta_pp": _pp(rate, base_rate)},
@@ -202,123 +192,6 @@ def round_facts(session: Session, round_id: int) -> dict:
                                               "route_order": worst["route_order"], "abnormal_rate": worst["abnormal_rate"]},
         "rising": [r["station"] for r in rows if r["trend"] == "increase"], "skipped": skipped, "duration_min": minutes,
     }
-
-
-# --- template text ----------------------------------------------------------------------------
-
-def _pct(rate: float) -> str:
-    return f"{rate * 100:.1f}%"
-
-
-def _change(pp: float, noun: str) -> str:
-    return f"{noun}เท่าเดิม" if abs(pp) < 0.05 else f"{noun}{'สูงขึ้น' if pp > 0 else 'ต่ำลง'} {abs(pp):.1f} จุดเปอร์เซ็นต์"
-
-
-def _advice(rate: float | None, rising: bool) -> str:
-    if rate is None:
-        return "ข้อแนะนำ: ยังสรุปสุขภาพผักไม่ได้ ควรตรวจกล้องและให้หุ่นยนต์ถ่ายภาพซ้ำ"
-    if rate >= ALERT_RATE or (rising and rate > 0):
-        return "ข้อแนะนำ: ควรให้ผู้ดูแลตรวจต้นผักด้วยตนเองโดยเร็ว"
-    return "ข้อแนะนำ: เฝ้าติดตามในรอบถัดไป" if rate > 0 else "ข้อแนะนำ: ยังไม่ต้องดำเนินการเพิ่มเติม"
-
-
-def _findings(counts: dict, where=None) -> str:
-    """'ใบเหลือง 2 ด้าน (หน้า, ขวา) จุดน้ำตาล 1 ด้าน (หลัง)': only the two disease classes, never a normal count."""
-    parts = []
-    for label in (stats.YELLOW, stats.BROWN):
-        if counts[label]:
-            angles = f" ({', '.join(where[label])})" if where else ""
-            parts.append(f"{label} {counts[label]} ด้าน{angles}")
-    return " ".join(parts)
-
-
-def _affected(angles: dict) -> dict:
-    return {label: [ANGLE_TH[a] for a in ANGLES if angles[a] and angles[a]["label"] == label] for label in (stats.YELLOW, stats.BROWN)}
-
-
-def _station_text(f: dict) -> str:
-    c, name = f["counts"], f["station"]
-    label = name if name.startswith("สถานี") else f"สถานี {name}"
-    if f["labelled"]:
-        found = f"พบ{_findings(c, _affected(f['angles']))}" if c[stats.YELLOW] or c[stats.BROWN] else "ไม่พบใบเหลืองหรือจุดน้ำตาล"
-        first = f"{label} {found} จาก {f['labelled']} ด้านที่วิเคราะห์ได้ (อัตราผิดปกติ {_pct(f['abnormal_rate'])})."
-    else:
-        first = f"{label} ยังไม่มีผลวิเคราะห์ที่ใช้ได้ (ถ่ายได้ {len(f['present'])} จาก 4 มุม)."
-    lines, notes = [first], []
-    if f["missing"]:
-        notes.append("ขาดมุม" + " ".join(ANGLE_TH[a] for a in f["missing"]))
-    if f["retakes"]:
-        notes.append(f"ถ่ายซ้ำ {f['retakes']} ครั้ง")
-    if f["needs_review"]:
-        notes.append(f"รอตรวจทาน {f['needs_review']} มุม")
-    if notes:
-        lines.append("หมายเหตุ: " + ", ".join(notes) + ".")
-
-    b, rate = f["baseline"], f["abnormal_rate"]
-    if b["rate"] is None:
-        lines.append("ไม่มีข้อมูลย้อนหลัง 7 วันของสถานีนี้ จึงยังเทียบกับวันก่อนหน้าไม่ได้.")
-    elif b["delta_pp"] is None:
-        lines.append(f"7 วันก่อนหน้าอัตราผิดปกติ {_pct(b['rate'])} (จาก {b['labelled']} ภาพ) แต่รอบนี้ยังเทียบไม่ได้.")
-    else:
-        lines.append(f"เทียบ 7 วันก่อนหน้า (อัตราผิดปกติ {_pct(b['rate'])} จาก {b['labelled']} ภาพ): {_change(b['delta_pp'], 'รอบนี้')}.")
-
-    t = f["trend"]
-    if t["direction"] == "insufficient":
-        lines.append(f"แนวโน้ม 14 วัน: ข้อมูลไม่พอ (มีข้อมูล {t['days']} วัน).")
-    else:
-        lines.append(f"แนวโน้ม 14 วัน: {t['label']} (7 วันแรก {_pct(t['first_rate'])} เป็น 7 วันหลัง {_pct(t['last_rate'])}).")
-
-    p = f["previous_visit"]
-    if p is None:
-        lines.append("ยังไม่มีรอบตรวจก่อนหน้าที่สถานีนี้.")
-    elif p["abnormal_rate"] is None:
-        lines.append(f"รอบตรวจก่อนหน้า (รอบที่ {p['round_id']}) ไม่มีผลวิเคราะห์ที่ใช้ได้ จึงเทียบไม่ได้.")
-    elif p["delta_pp"] is not None:
-        lines.append(f"เทียบรอบตรวจก่อนหน้า (รอบที่ {p['round_id']} อัตราผิดปกติ {_pct(p['abnormal_rate'])}): {_change(p['delta_pp'], 'รอบนี้')}.")
-
-    batch = f["batch"]
-    if batch:
-        left = batch["harvest_in_days"]
-        due = f"อีกประมาณ {left} วันถึงกำหนดเก็บเกี่ยว" if left >= 0 else f"เกินกำหนดเก็บเกี่ยว {-left} วัน"
-        lines.append(f"ล็อตที่ปลูกอยู่อายุ {batch['age_days']} วัน {due} (รอบเก็บเกี่ยว {batch['cycle_days_assumed']} วันเป็นค่าสมมติ).")
-    lines.append(_advice(rate, t["direction"] == "increase"))
-    return "\n".join(lines)
-
-
-def _round_text(f: dict) -> str:
-    rid, n, m = f["round_id"], f["stations_inspected"], f["stations_expected"]
-    if f["labelled"]:
-        c = f["counts"]
-        found = f"พบ{_findings(c)}" if c[stats.YELLOW] or c[stats.BROWN] else "ไม่พบใบเหลืองหรือจุดน้ำตาล"
-        first = f"รอบที่ {rid} ตรวจ {n} จาก {m} สถานี {found} จาก {f['labelled']} ด้านที่วิเคราะห์ได้ (อัตราผิดปกติรวม {_pct(f['abnormal_rate'])})."
-    else:
-        first = f"รอบที่ {rid} ตรวจ {n} จาก {m} สถานี ยังไม่มีผลวิเคราะห์ที่ใช้ได้."
-    lines = [first]
-    b = f["baseline"]
-    if b["rate"] is None:
-        lines.append("ไม่มีข้อมูลย้อนหลัง 7 วัน จึงยังเทียบกับวันก่อนหน้าไม่ได้.")
-    elif b["delta_pp"] is not None:
-        lines.append(f"เทียบ 7 วันก่อนหน้า (อัตราผิดปกติ {_pct(b['rate'])} จาก {b['labelled']} ภาพ): {_change(b['delta_pp'], 'รอบนี้')}.")
-    if f["worst"]:
-        lines.append(f"สถานีที่ผิดปกติสูงสุด: {f['worst']['station']} ({_pct(f['worst']['abnormal_rate'])}).")
-    if f["rising"]:
-        lines.append("สถานีที่แนวโน้ม 14 วันเพิ่มขึ้น: " + ", ".join(f["rising"]) + ".")
-    if f["skipped"]:
-        lines.append("สถานีที่ตรวจไม่ครบ 4 มุม: " + ", ".join(f"{s['station']} ({s['present']}/4)" for s in f["skipped"]) + ".")
-    extra = []
-    if f["needs_review"]:
-        extra.append(f"รอตรวจทานรวม {f['needs_review']} มุม")
-    if f["duration_min"] is not None:
-        extra.append(f"ใช้เวลาประมาณ {f['duration_min']} นาที")
-    if extra:
-        lines.append(", ".join(extra) + ".")
-    lines.append(_advice(f["abnormal_rate"], bool(f["rising"])))
-    return "\n".join(lines)
-
-
-def render_text(facts: dict) -> str:
-    """Deterministic Thai text from the facts; always available, used as the fallback for the AI wording."""
-    return _round_text(facts) if facts["scope"] == "round" else _station_text(facts)
 
 
 # --- robot screen: the three comparisons (findings only: yellow and brown, never a normal count) ---
@@ -379,10 +252,6 @@ def _delta(n: int) -> str:
     return f"{n:+d}" if n else "0"
 
 
-def _where(angles: dict, label: str) -> str:
-    return ",".join(a[0].upper() for a in ANGLES if angles[a] and angles[a]["label"] == label)
-
-
 def display(facts: dict) -> dict:
     """The robot-screen payload, built from the facts only (never from AI text, never Thai or station names).
     Only the two disease classes are shown; a clean station is just 'No disease found'."""
@@ -393,10 +262,10 @@ def display(facts: dict) -> dict:
         base, worst = facts["baseline"]["rate"], facts["worst"]
         trend = "UP" if rising or (delta is not None and delta >= TREND_PP) else "DOWN" if delta is not None and delta <= -TREND_PP             else "FLAT" if delta is not None else "NO DATA"
         level = "alert" if (rate or 0) >= 0.5 or (delta or 0) >= 10 else "warn" if rate or facts["skipped"] else "ok"
-        found = "No analysed angles" if not facts["labelled"] else f"Y {y} B {b} of {facts['labelled']} views" if y or b else "No disease found"
+        found = "No analysis" if not facts["labelled"] else f"Y {y} B {b} of {facts['labelled']}" if y or b else "No disease found"
         lines = [
             f"ROUND {facts['round_id']} DONE",
-            found if len(found) <= DISPLAY_COLS else found.removesuffix(" views"),
+            found,
             "Abn n/a" if rate is None else f"Abn {rate * 100:.0f}% (7d {'n/a' if base is None else f'{base * 100:.0f}%'})",
             "Worst: " + (_st(worst["route_order"], worst["station_id"]) if worst else "none"),
             f"Trend: {trend}",
@@ -412,16 +281,15 @@ def display(facts: dict) -> dict:
             before = "Prev: n/a"
         else:
             before = f"Prev: Y{_delta(y - prev['counts'][stats.YELLOW])} B{_delta(b - prev['counts'][stats.BROWN])}"
-        groups = [f"{k}:{_where(facts['angles'], label)}" for k, label in (("Y", stats.YELLOW), ("B", stats.BROWN)) if c[label]]
         vs = facts["baseline"]["delta_pp"]
         lines = [
-            f"{_st(facts['route_order'], facts['station_id'])} {len(facts['present'])}/4 angles",
-            "No analysed angles" if rate is None else f"Yellow {y} Brown {b}" if y or b else "No disease found",
+            f"{_st(facts['route_order'], facts['station_id'])} {len(facts['present'])}/{facts['expected']} photos",
+            "No analysis" if rate is None else f"Yellow {y} Brown {b}" if y or b else "No disease found",
             "Abn n/a" if rate is None else f"Abn {rate * 100:.0f}% vs 7d {_signed(vs)}",
             f"Trend: {_TREND_ASCII[t['direction']]}",
             before,
             f"Review: {facts['needs_review']}" if facts["needs_review"] else "",
-            "  ".join(groups),
+            "",
         ]
     out = {"level": level, "title": _ascii(lines[0])}
     out.update({f"l{i}": _ascii(x) for i, x in enumerate(lines[1:], 1)})
@@ -433,17 +301,29 @@ def device_headline(text: str) -> str:
     return h if len(h) <= HEADLINE_MAX else h[:HEADLINE_MAX - 1] + "…"
 
 
-# --- optional AI wording ----------------------------------------------------------------------
+# --- the AI summary: retrieve from the database, then the model writes every sentence ----------------
 
+SECTIONS = ("result", "compare", "trend", "advice")
+SECTION_LABEL = {"compare": "เทียบก่อนหน้า", "trend": "แนวโน้ม", "advice": "ข้อแนะนำ"}  # "result" is the first line, no label
+LINE_MAX = 200
+HISTORY_VISITS = 10  # earlier visits of the station handed to the AI
+LOT_DAYS = 60  # most recent days of the lot's history handed to the AI
+ALLOWED_NUMBERS = {0.0, 1.0, float(BASELINE_DAYS), float(TREND_DAYS)}  # words like "7 วัน" / "14 วัน" are not data
+
+NL = chr(10)
 PROMPT = (
-    "คุณเป็นผู้ช่วยสรุปผลตรวจผักในโรงเรือน เขียนสรุปภาษาไทยไม่เกิน 120 คำ จากข้อมูล JSON ด้านล่างเท่านั้น "
-    "ใช้เฉพาะตัวเลขที่มีในข้อมูล ห้ามเดาหรือเพิ่มตัวเลขเอง บอกว่าเมื่อเทียบกับวันก่อนหน้าเปลี่ยนไปอย่างไร แนวโน้มเป็นอย่างไร "
-    "และผู้ปลูกควรทำอะไร พูดถึงเฉพาะใบเหลืองและจุดน้ำตาล ห้ามระบุจำนวนหรือผลของใบที่ปกติ ถ้าข้อมูลไม่พอให้บอกตรง ๆ ตอบเป็นข้อความธรรมดา ไม่ใช้ markdown\n\nข้อมูล:\n"
+    "คุณเป็นผู้ช่วยสรุปผลตรวจผักในโรงเรือน สรุปจากข้อมูลที่ดึงมาจากฐานข้อมูล (JSON ด้านล่าง) เท่านั้น "
+    "ตอบเป็น JSON object เดียว มี 4 คีย์เท่านั้น แต่ละคีย์เป็นข้อความภาษาไทย 1 ประโยค บรรทัดเดียว ไม่เกิน 160 ตัวอักษร: "
+    "result = ผลตรวจครั้งนี้ (จำนวนต้นใบเหลือง จำนวนต้นจุดน้ำตาล จากผักที่ตรวจกี่ต้น), "
+    "compare = เทียบกับ 7 วันก่อนหน้าและกับการตรวจครั้งก่อน, "
+    "trend = แนวโน้ม 14 วันและตลอดล็อต, advice = ข้อแนะนำสำหรับผู้ปลูก. "
+    "กฎ: ใช้เฉพาะตัวเลขที่มีในข้อมูล ห้ามคำนวณหรือเดาตัวเลขเอง ถ้าไม่มีข้อมูลให้เปรียบเทียบให้เขียนว่ายังเปรียบเทียบไม่ได้ "
+    "พูดถึงเฉพาะใบเหลืองและจุดน้ำตาล ห้ามพูดถึงผักที่ปกติ ไม่ใช้ markdown ตอบเฉพาะ JSON" + NL + NL + "ข้อมูล:" + NL
 )
 
 
 def _without_normal(o):
-    """Facts for the AI without any ปกติ / normal count, so its wording cannot mention one."""
+    """Records for the AI without any ปกติ / normal count, so its wording cannot mention one."""
     if isinstance(o, dict):
         return {k: _without_normal(v) for k, v in o.items() if k not in (stats.NORMAL, "normal", "n_normal")}
     if isinstance(o, list):
@@ -451,11 +331,80 @@ def _without_normal(o):
     return o
 
 
-def _ai_call(facts: dict) -> tuple[str, str] | None:
+def _with_percentages(o):
+    """Every *rate (a fraction) also as <name>_pct so the AI quotes a percentage instead of doing arithmetic."""
+    if isinstance(o, dict):
+        out = {}
+        for k, v in o.items():
+            out[k] = _with_percentages(v)
+            if k.endswith("rate") and isinstance(v, (int, float)) and not isinstance(v, bool):
+                out[k + "_pct"] = round(v * 100, 1)
+        return out
+    if isinstance(o, list):
+        return [_with_percentages(v) for v in o]
+    return o
+
+
+def retrieve(session: Session, round_id: int, station_id: int | None, facts: dict) -> dict:
+    """The records the AI may use: this visit's facts plus what the database holds about earlier visits and the lot."""
+    ctx = {"facts": _without_normal(facts)}
+    if station_id is not None:
+        rows = session.execute(
+            select(StationAnalysis.round_id, StationAnalysis.created_at, StationAnalysis.n_total, StationAnalysis.n_yellow, StationAnalysis.n_brown)
+            .where(StationAnalysis.station_id == station_id, StationAnalysis.round_id < round_id, StationAnalysis.n_total.is_not(None))
+            .order_by(StationAnalysis.round_id.desc()).limit(HISTORY_VISITS)).all()
+        ctx["earlier_visits"] = [{"round_id": r, "day": _utc_day(at).isoformat(), "plants": t, "yellow": y, "brown": b}
+                                 for r, at, t, y, b in rows]
+        if facts.get("batch"):  # the lot's daily history since planting, newest LOT_DAYS days with data
+            day = date.fromisoformat(facts["day"])
+            since = day - timedelta(days=facts["batch"]["age_days"])
+            days = session.execute(
+                select(DailyStat.day, func.sum(DailyStat.n_normal), func.sum(DailyStat.n_yellow), func.sum(DailyStat.n_brown))
+                .where(DailyStat.station_id == station_id, DailyStat.day >= since, DailyStat.day < day)
+                .group_by(DailyStat.day).order_by(DailyStat.day.desc()).limit(LOT_DAYS)).all()
+            ctx["lot_days"] = [{"day": d.isoformat(), "plants": int((n or 0) + (y or 0) + (b or 0)), "yellow": int(y or 0), "brown": int(b or 0)}
+                               for d, n, y, b in days if (n or 0) + (y or 0) + (b or 0) > 0]
+    return _with_percentages(ctx)
+
+
+def _numbers_in(text: str) -> set[float]:
+    return {float(x) for x in re.findall(r"\d+(?:\.\d+)?", text)}
+
+
+def _parse_summary(text: str, context: dict) -> dict | None:
+    """The four sections as clean one-line strings, or None when the answer cannot be used (wrong shape, too long,
+    mentions normal plants, or quotes a number that is not in the retrieved records)."""
+    try:
+        data = _first_json_object(text)
+        out = {k: " ".join(str(data[k]).split()) for k in SECTIONS}
+    except (ValueError, KeyError, TypeError):
+        return None
+    allowed = _numbers_in(json.dumps(context, ensure_ascii=False)) | ALLOWED_NUMBERS
+    for line in out.values():
+        if not line or len(line) > LINE_MAX or re.search(r"(?<!ผิด)ปกติ", line):
+            return None
+        for token in re.findall(r"\d+(?:\.\d+)?", line):
+            v, places = float(token), len(token.split(".")[1]) if "." in token else 0
+            if not any(a == v or round(a, places) == v for a in allowed):
+                return None
+    return out
+
+
+def render_summary(sections: dict) -> str:
+    """Always the same layout: the result line, then the compare / trend / advice lines with fixed labels."""
+    return NL.join([sections["result"]] + [f"{SECTION_LABEL[k]}: {sections[k]}" for k in SECTIONS[1:]])
+
+
+def device_headline(text: str) -> str:
+    h = headline(text)
+    return h if len(h) <= HEADLINE_MAX else h[:HEADLINE_MAX - 1] + "…"
+
+
+def _ai_call(context: dict) -> tuple[dict, str] | None:
     """One text-only request to the configured provider. Same key lookup and base-URL checks as analyzer.py."""
     try:
         prov = get_provider(runtime_config.vision_provider())
-        content = PROMPT + json.dumps(_without_normal(facts), ensure_ascii=False, separators=(",", ":"))
+        content = PROMPT + json.dumps(context, ensure_ascii=False, separators=(",", ":"))
         timeout = AI_BUDGET_S - 1
         if prov.kind == "anthropic":
             model = runtime_config.get_setting(runtime_config.VISION_MODEL) or settings.vision_model
@@ -483,20 +432,22 @@ def _ai_call(facts: dict) -> tuple[str, str] | None:
             if choice.finish_reason in ("length", "content_filter"):
                 return None
             text, used = choice.message.content, getattr(resp, "model", None) or model
-        text = (text or "").strip()
-        return (text[:AI_MAX_CHARS], used) if text else None
+        parsed = _parse_summary(text or "", context)
+        if parsed is None:
+            log.warning("summary AI answer rejected (shape, length, normal-plant mention or an unknown number)")
+        return (parsed, used) if parsed else None
     except Exception as e:  # type only: provider errors can echo request details
-        log.warning("summary AI narration failed: %s", type(e).__name__)
+        log.warning("summary AI call failed: %s", type(e).__name__)
         return None
 
 
-def ai_narrate(facts: dict) -> tuple[str, str] | None:
-    """(text, model) or None. Never raises; gives up after AI_BUDGET_S so the caller can use the template text."""
+def ai_narrate(context: dict) -> tuple[dict, str] | None:
+    """(sections, model) or None. Never raises; gives up after AI_BUDGET_S (the summary then stays pending)."""
     pool = ThreadPoolExecutor(max_workers=1)
     try:
-        return pool.submit(_ai_call, facts).result(timeout=AI_BUDGET_S)
+        return pool.submit(_ai_call, context).result(timeout=AI_BUDGET_S)
     except Exception as e:  # includes the budget TimeoutError
-        log.warning("summary AI narration failed: %s", type(e).__name__)
+        log.warning("summary AI call failed: %s", type(e).__name__)
         return None
     finally:
         pool.shutdown(wait=False)  # a straggler thread ends by its own client timeout
@@ -517,17 +468,18 @@ def _upsert(session: Session, round_id: int, station_id: int | None, facts: dict
 
 
 def _generate(session: Session, round_id: int, station_id: int | None, facts: dict, use_ai: bool) -> Summary:
-    text, source, model = render_text(facts), "template", None
+    """Store the facts and, when the AI answers, its summary. No answer: the row stays "pending" with an empty text."""
+    context = retrieve(session, round_id, station_id, facts)
     session.commit()  # end the read transaction: the AI call below must not hold a database connection
     ai = None
     if use_ai:
         try:
-            ai = ai_narrate(facts)
-        except Exception as e:  # ai_narrate never raises by contract; the template text must survive a broken one anyway
-            log.warning("summary AI narration failed: %s", type(e).__name__)
+            ai = ai_narrate(context)
+        except Exception as e:  # ai_narrate never raises by contract; the row must be stored anyway
+            log.warning("summary AI call failed: %s", type(e).__name__)
     if ai:
-        text, (source, model) = ai[0], ("ai", ai[1])
-    return _upsert(session, round_id, station_id, facts, text, source, model)
+        return _upsert(session, round_id, station_id, facts, render_summary(ai[0]), "ai", ai[1])
+    return _upsert(session, round_id, station_id, facts, "", "pending", None)
 
 
 def generate_station_summary(session: Session, round_id: int, station_id: int, use_ai: bool = True) -> Summary:
@@ -539,7 +491,7 @@ def generate_round_summary(session: Session, round_id: int, use_ai: bool = True)
 
 
 def ensure_station_summaries(session: Session, round_id: int) -> None:
-    """Template summaries for the round's stations that have none yet."""
+    """Pending rows (facts only) for the round's stations that have none yet; retry_pending() asks the AI later."""
     have = set(session.scalars(select(Summary.station_id).where(Summary.round_id == round_id, Summary.station_id.is_not(None))))
     for sid in round_station_ids(session, round_id):
         if sid not in have:
@@ -548,6 +500,23 @@ def ensure_station_summaries(session: Session, round_id: int) -> None:
 
 def has_round_summary(session: Session, round_id: int) -> bool:
     return session.scalar(select(Summary.id).where(Summary.round_id == round_id, Summary.station_id.is_(None)).limit(1)) is not None
+
+
+def retry_pending(limit: int = 6) -> list[tuple[int, int | None]]:
+    """Ask the AI again for summaries that have no AI text yet (newest first). Returns the (round, station) pairs it filled in."""
+    filled = []
+    with Session(app.db.engine) as s:
+        todo = s.execute(select(Summary.round_id, Summary.station_id).where(Summary.source != "ai").order_by(Summary.id.desc()).limit(limit)).all()
+        for rid, sid in todo:
+            try:
+                row = generate_station_summary(s, rid, sid) if sid is not None else generate_round_summary(s, rid)
+            except Exception as e:
+                log.warning("summary retry failed: %s", type(e).__name__)
+                s.rollback()
+                continue
+            if row.source == "ai":
+                filled.append((rid, sid))
+    return filled
 
 
 # --- background entry points (own Session; never raise) ---------------------------------------
@@ -572,19 +541,10 @@ def _background(kind: str, round_id: int, work) -> None:
 
 
 def docked_fallback(round_id: int) -> None:
-    """Robot docked: if the round has captures but no round summary, make the template one (the robot did not call /finish)."""
+    """Robot docked: if the round has captures but no round summary, make it now (the robot did not call /finish)."""
     def work(s: Session) -> None:
         if has_round_summary(s, round_id) or not round_station_ids(s, round_id):
             return
         ensure_station_summaries(s, round_id)
-        generate_round_summary(s, round_id, use_ai=False)
+        generate_round_summary(s, round_id)
     _background("docked", round_id, work)
-
-
-def regenerate_round(round_id: int) -> None:
-    """Admin button: every station summary and the round summary again, with AI when it is configured."""
-    def work(s: Session) -> None:
-        for sid in round_station_ids(s, round_id):
-            generate_station_summary(s, round_id, sid, use_ai=True)
-        generate_round_summary(s, round_id, use_ai=True)
-    _background("regen", round_id, work)

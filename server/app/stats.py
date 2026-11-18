@@ -1,13 +1,14 @@
-"""Daily per-station rollup of captures/analyses into daily_stats.
+"""Daily per-station rollup of captures and station analyses into daily_stats.
 
-Day boundaries are UTC (captures.taken_at is stored as UTC).
+n_captures / n_quality_ok count photos; n_normal / n_yellow / n_brown count PLANTS (from station_analyses,
+dated by their created_at). Day boundaries are UTC (timestamps are stored as UTC).
 """
 from datetime import date, datetime, time, timedelta, timezone
 
 from sqlalchemy import Date, case, func, select
 from sqlalchemy.orm import Session
 
-from app.models import Analysis, Batch, Capture, DailyStat
+from app.models import Batch, Capture, DailyStat, StationAnalysis
 
 CATCHUP_DAYS = 400  # start-up catch-up looks back this far only, so a cold start on a sleeping host stays cheap
 NORMAL, YELLOW, BROWN = "ปกติ", "ใบเหลือง", "จุดน้ำตาล"
@@ -47,13 +48,17 @@ def _day_rows(session: Session, day: date, station_id: int | None) -> int:
     ).all()
     if not totals:
         return 0
-    # Only the newest analysis of a capture is final; unknown labels land in no symptom column.
-    final = Analysis.id == select(func.max(Analysis.id)).where(Analysis.capture_id == Capture.id).correlate(Capture).scalar_subquery()
+    analysis_day = [StationAnalysis.created_at >= start, StationAnalysis.created_at < start + timedelta(days=1)]
+    if station_id is not None:
+        analysis_day.append(StationAnalysis.station_id == station_id)
+    # A failed analysis (NULL counts) adds nothing but is still flagged for review.
     symptoms = {
         r[0]: r[1:] for r in session.execute(
-            select(Capture.station_id, _count(Analysis.label == NORMAL), _count(Analysis.label == YELLOW),
-                   _count(Analysis.label == BROWN), _count(Analysis.needs_review.is_(True)), func.avg(Analysis.confidence))
-            .join(Capture, Analysis.capture_id == Capture.id).where(*in_day, final).group_by(Capture.station_id)
+            select(StationAnalysis.station_id,
+                   func.sum(StationAnalysis.n_total - StationAnalysis.n_yellow - StationAnalysis.n_brown),
+                   func.sum(StationAnalysis.n_yellow), func.sum(StationAnalysis.n_brown),
+                   _count(StationAnalysis.needs_review.is_(True)), func.avg(StationAnalysis.confidence))
+            .where(*analysis_day).group_by(StationAnalysis.station_id)
         )
     }
     batches = session.scalars(

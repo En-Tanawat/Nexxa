@@ -15,7 +15,7 @@
 {% endblock %}
 
 {% block content %}
-{{ c.page_header("ภาพรวมโรงเรือน", eyebrow="แดชบอร์ดสาธารณะ", text="สุขภาพผักของแต่ละสถานีและสิ่งที่ต้องทำวันนี้ อัปเดตอัตโนมัติทุก 1 นาที") }}
+{{ c.page_header("ภาพรวมโรงเรือน", eyebrow="แดชบอร์ดสาธารณะ", text="สถานะผักของแต่ละสถานี และสรุปล่าสุดจาก AI อัปเดตอัตโนมัติทุก 1 นาที") }}
 
 <div id="demo-banner"{% if not demo %} hidden{% endif %}>
   {{ c.alert("info", "ข้อมูลที่เห็นในหน้านี้เป็นตัวอย่างสำหรับสาธิตระบบ ไม่ใช่ข้อมูลจริงของโรงเรือน", title="ข้อมูลตัวอย่าง (DEMO)") }}
@@ -41,11 +41,9 @@
 </div>
 
 {%- set kpis = [
-  ("stations", "station", "สถานีที่ใช้งาน", "สถานีตรวจที่เปิดอยู่"),
-  ("captures", "camera", "ภาพที่ตรวจวันนี้", "นับวันตามเวลา UTC (เริ่ม 07:00 น.)"),
-  ("abnormal", "warn", "อัตราผิดปกติวันนี้", "ใบเหลือง + จุดน้ำตาล จากภาพที่วิเคราะห์ได้"),
-  ("review", "eye", "รอตรวจทาน", "ภาพที่ AI ไม่มั่นใจ ภายใน 7 วันล่าสุด"),
-  ("harvest", "batch", "ล็อตใกล้เก็บเกี่ยว", "คำนวณจากรอบเก็บเกี่ยว 45 วัน (ค่าสมมติ)"),
+  ("diseased", "warn", "ต้นที่เป็นโรควันนี้", "ใบเหลือง + จุดน้ำตาล"),
+  ("abnormal", "chart", "อัตราผิดปกติวันนี้", "สัดส่วนต้นที่เป็นโรค จากต้นที่ตรวจ"),
+  ("review", "eye", "รอตรวจทาน", "ผลที่ AI ไม่มั่นใจ ภายใน 7 วันล่าสุด"),
 ] -%}
 <ul class="kpi-grid" id="kpi-grid" role="list" aria-label="ตัวเลขสำคัญวันนี้"{% if not has_data %} hidden{% endif %}>
   {%- for key, icon, label, note in kpis %}
@@ -64,8 +62,8 @@
     <header class="card__head">
       <span class="icon-tile">{{ c.icon("camera", 20) }}</span>
       <div class="robot-monitor__head-titles">
-        <h2 class="card__title" id="robot-monitor-title">กล้องและขั้นตอนการตรวจของหุ่นยนต์</h2>
-        <p class="card__subtitle">ภาพล่าสุดจากกล้อง ESP32-CAM อัปเดตทุก ~5 วินาทีขณะหุ่นยนต์ทำงาน และขั้นตอนการตรวจแปลงผัก</p>
+        <h2 class="card__title" id="robot-monitor-title">หุ่นยนต์ตอนนี้</h2>
+        <p class="card__subtitle">ภาพล่าสุดจากกล้องและสิ่งที่หุ่นยนต์กำลังทำ</p>
       </div>
       <div class="robot-monitor__head-status">
         <span class="badge badge--neutral" id="robot-badge-status">
@@ -93,10 +91,6 @@
                 <span class="robot-pulse-dot" aria-hidden="true"></span>
                 <span id="robot-chip-live-text">⚪ รอภาพ</span>
               </span>
-              <span class="robot-chip" id="robot-chip-angle" hidden>
-                <span class="robot-chip__icon">{{ c.icon("camera", 14) }}</span>
-                <span id="robot-chip-angle-text">มุม: หน้า</span>
-              </span>
               <span class="robot-chip" id="robot-cam-age" hidden></span>
               <span class="robot-chip" id="robot-chip-station" hidden>
                 <span class="robot-chip__icon" aria-hidden="true">📍</span>
@@ -107,10 +101,6 @@
               <span class="robot-chip" id="robot-chip-battery" hidden>
                 <span class="robot-chip__icon" aria-hidden="true">🔋</span>
                 <span id="robot-chip-battery-text">85%</span>
-              </span>
-              <span class="robot-chip" id="robot-chip-wifi" hidden>
-                <span class="robot-chip__icon" aria-hidden="true">📶</span>
-                <span id="robot-chip-wifi-text">-65 dBm</span>
               </span>
               <button type="button" class="robot-fs-btn" id="robot-cam-fs-btn" aria-label="เต็มหน้าจอ" title="ดูภาพเต็มหน้าจอ">
                 {{ c.icon("maximize", 16) }}
@@ -129,55 +119,7 @@
           <div class="robot-activity-card__meta">
             <span class="robot-meta-pill" id="robot-round-pill">รอบที่: –</span>
             <span class="robot-meta-pill" id="robot-station-pill">สถานี: –</span>
-            <span class="robot-meta-pill" id="robot-angle-pill">มุมกล้อง: –</span>
           </div>
-        </div>
-
-        <!-- 5-Step Pipeline -->
-        <div class="robot-pipeline-wrap">
-          <p class="robot-pipeline-title">ขั้นตอนการตรวจของหุ่นยนต์</p>
-          <ol class="robot-pipeline" id="robot-pipeline" role="list">
-            <li class="robot-step" id="robot-step-1" data-step="1">
-              <span class="robot-step__num">1</span>
-              <div class="robot-step__info">
-                <p class="robot-step__title">จุดเริ่มต้น</p>
-                <p class="robot-step__sub">Home / จุดจอดชาร์จ</p>
-              </div>
-              <span class="robot-step__check" aria-hidden="true">{{ c.icon("ok", 16) }}</span>
-            </li>
-            <li class="robot-step" id="robot-step-2" data-step="2">
-              <span class="robot-step__num">2</span>
-              <div class="robot-step__info">
-                <p class="robot-step__title">เคลื่อนที่</p>
-                <p class="robot-step__sub">Transit ไปยังสถานี</p>
-              </div>
-              <span class="robot-step__check" aria-hidden="true">{{ c.icon("ok", 16) }}</span>
-            </li>
-            <li class="robot-step" id="robot-step-3" data-step="3">
-              <span class="robot-step__num">3</span>
-              <div class="robot-step__info">
-                <p class="robot-step__title">ถ่ายภาพ 4 ด้าน</p>
-                <p class="robot-step__sub">หน้า / ขวา / หลัง / ซ้าย</p>
-              </div>
-              <span class="robot-step__check" aria-hidden="true">{{ c.icon("ok", 16) }}</span>
-            </li>
-            <li class="robot-step" id="robot-step-4" data-step="4">
-              <span class="robot-step__num">4</span>
-              <div class="robot-step__info">
-                <p class="robot-step__title">วิเคราะห์ AI</p>
-                <p class="robot-step__sub">ประเมินสุขภาพใบผัก</p>
-              </div>
-              <span class="robot-step__check" aria-hidden="true">{{ c.icon("ok", 16) }}</span>
-            </li>
-            <li class="robot-step" id="robot-step-5" data-step="5">
-              <span class="robot-step__num">5</span>
-              <div class="robot-step__info">
-                <p class="robot-step__title">สรุปผล &amp; กลับจุดจอด</p>
-                <p class="robot-step__sub">Complete สิ้นสุดรอบตรวจ</p>
-              </div>
-              <span class="robot-step__check" aria-hidden="true">{{ c.icon("ok", 16) }}</span>
-            </li>
-          </ol>
         </div>
       </div>
     </div>
@@ -193,36 +135,10 @@
     <p><a class="btn btn--secondary btn--sm" id="latest-link" href="/history"><span class="btn__label">ดูสรุปทุกรอบ</span></a></p>
   </section>
 
-  <div class="dash-grid">
-    <section class="card panel" aria-labelledby="twin-title">
-      <header class="card__head">
-        <span class="icon-tile">{{ c.icon("overview", 20) }}</span>
-        <div><h2 class="card__title" id="twin-title">แผนผังโรงเรือน</h2><p class="card__subtitle">ตำแหน่งสถานีและสถานะล่าสุด</p></div>
-      </header>
-      {#- Task 8 mounts the three.js scene here. The box keeps its size so nothing shifts when it replaces the placeholder. -#}
-      <div class="twin-root" id="twin-root" role="region" aria-label="แผนผัง 3 มิติของโรงเรือน">
-        <div class="twin-ph">
-          <svg class="twin-ph__art" viewBox="0 0 360 200" fill="none" aria-hidden="true" focusable="false">
-            <rect class="ph-floor" x="12" y="12" width="336" height="176" rx="22"/>
-            <rect class="ph-bed" x="40" y="38" width="120" height="30" rx="10"/>
-            <rect class="ph-bed" x="200" y="38" width="120" height="30" rx="10"/>
-            <rect class="ph-bed" x="40" y="86" width="120" height="30" rx="10"/>
-            <rect class="ph-bed" x="200" y="86" width="120" height="30" rx="10"/>
-            <rect class="ph-bed" x="40" y="134" width="120" height="30" rx="10"/>
-            <rect class="ph-bed" x="200" y="134" width="120" height="30" rx="10"/>
-            <path class="ph-route" d="M180 176V28M180 28H340"/>
-            <circle class="ph-dot" cx="100" cy="53" r="7"/><circle class="ph-dot" cx="260" cy="101" r="7"/><circle class="ph-dot" cx="100" cy="149" r="7"/>
-          </svg>
-          <p class="twin-ph__title">แผนผัง 3 มิติกำลังพัฒนา</p>
-          <p class="twin-ph__text">ระหว่างนี้ดูสถานะของแต่ละสถานีได้จากรายการด้านข้าง</p>
-        </div>
-      </div>
-    </section>
-
-    <section class="card panel" aria-labelledby="stations-title">
+  <section class="card panel" aria-labelledby="stations-title">
       <header class="card__head">
         <span class="icon-tile">{{ c.icon("station", 20) }}</span>
-        <div><h2 class="card__title" id="stations-title">สถานีทั้งหมด</h2><p class="card__subtitle" id="stations-sub">สถานะจากภาพล่าสุดของแต่ละสถานี</p></div>
+        <div><h2 class="card__title" id="stations-title">สถานีทั้งหมด</h2><p class="card__subtitle" id="stations-sub">สถานะจากผลตรวจล่าสุดของแต่ละสถานี</p></div>
       </header>
       <div class="scroll-area" tabindex="0" role="region" aria-label="รายการสถานี">
         <ul class="row-list" id="station-list" role="list">
@@ -242,17 +158,15 @@
         <p class="list-empty" id="station-empty" hidden>ยังไม่มีสถานีที่เปิดใช้งาน</p>
       </div>
       <ul class="status-legend" role="list" aria-label="ความหมายของสถานะ">
-        <li>{{ c.badge("ok", "ปกติ") }}<span>ภาพล่าสุดไม่พบอาการ</span></li>
-        <li>{{ c.badge("warn", "ใบเหลือง") }}<span>พบใบเหลืองในภาพล่าสุด</span></li>
+        <li>{{ c.badge("ok", "ปกติ") }}<span>ผลล่าสุดไม่พบอาการ</span></li>
+        <li>{{ c.badge("warn", "ใบเหลือง") }}<span>พบต้นใบเหลืองในผลล่าสุด</span></li>
         <li>{{ c.badge("danger", "จุดน้ำตาล") }}<span>พบจุดสีน้ำตาลบนใบ</span></li>
         <li>{{ c.badge("info", "รอตรวจทาน") }}<span>AI ไม่มั่นใจ รอผู้ดูแลตรวจ</span></li>
         <li>{{ c.badge("neutral", "ยังไม่มีข้อมูล") }}<span>ยังไม่มีภาพจากสถานี</span></li>
       </ul>
     </section>
-  </div>
 
-  <div class="dash-row">
-    <section class="card panel" aria-labelledby="lots-title">
+  <section class="card panel" aria-labelledby="lots-title">
       <header class="card__head">
         <span class="icon-tile">{{ c.icon("batch", 20) }}</span>
         <div><h2 class="card__title" id="lots-title">ล็อตใกล้เก็บเกี่ยว</h2><p class="card__subtitle" id="lots-sub">เหลือไม่เกิน 7 วัน หรือเกินกำหนดไม่เกิน 14 วัน</p></div>
@@ -270,26 +184,6 @@
       <p class="list-empty" id="lot-empty" hidden>ยังไม่มีล็อตที่ใกล้ถึงวันเก็บเกี่ยว</p>
       <p class="note" id="lot-note">กำหนดเก็บเกี่ยวคำนวณจากรอบ 45 วันนับจากวันปลูก (ค่าสมมติ ไม่ใช่วันที่ผู้ปลูกกำหนด)</p>
     </section>
-
-    <section class="card panel" aria-labelledby="activity-title">
-      <header class="card__head">
-        <span class="icon-tile">{{ c.icon("activity", 20) }}</span>
-        <div><h2 class="card__title" id="activity-title">การตรวจล่าสุด</h2><p class="card__subtitle">สถานีที่เพิ่งมีภาพเข้ามา</p></div>
-      </header>
-      <ul class="row-list" id="activity-list" role="list">
-        <li class="row-skeleton" aria-hidden="true">
-          <div class="row__main"><span class="skeleton skeleton--text w-50"></span><span class="skeleton skeleton--text w-30"></span></div>
-          <div class="row__side"><span class="skeleton skeleton--badge"></span></div>
-        </li>
-        <li class="row-skeleton" aria-hidden="true">
-          <div class="row__main"><span class="skeleton skeleton--text w-70"></span><span class="skeleton skeleton--text w-40"></span></div>
-          <div class="row__side"><span class="skeleton skeleton--badge"></span></div>
-        </li>
-      </ul>
-      <p class="list-empty" id="activity-empty" hidden>ยังไม่มีการตรวจ</p>
-    </section>
-  </div>
-</div>
 
 {#- Row/badge/trend shapes for dashboard.js to clone: the icons come from the shared macros, the text is set with textContent. -#}
 {%- for kind in ["ok", "warn", "danger", "info", "neutral"] %}
@@ -309,12 +203,6 @@
     <div class="row__main"><p class="row__name"></p><p class="row__meta"></p></div>
     <div class="row__side"><span data-slot="badge"></span></div>
     <div class="row__bar"><progress class="meter" max="1" value="0"></progress></div>
-  </li>
-</template>
-<template id="tpl-activity">
-  <li>
-    <div class="row__main"><p class="row__name"></p><p class="row__meta"></p></div>
-    <div class="row__side"><span data-slot="badge"></span></div>
   </li>
 </template>
 {% endblock %}

@@ -110,10 +110,10 @@
           <span class="step-title">2. เดินทางไปยังสถานีและสแกน RFID</span>
         </li>
         <li class="steps__item{% if status.step_index > 3 %} is-done{% elif status.step_index == 3 and status.online %} is-active{% endif %}">
-          <span class="step-title">3. บันทึกภาพใบผัก 4 มุมรอบต้น</span>
+          <span class="step-title">3. ถ่ายภาพรวมของสถานี 3 มุม (บน ซ้าย ขวา)</span>
         </li>
         <li class="steps__item{% if status.step_index > 4 %} is-done{% elif status.step_index == 4 and status.online %} is-active{% endif %}">
-          <span class="step-title">4. ส่งภาพและประมวลผลด้วย AI</span>
+          <span class="step-title">4. ส่งภาพ แล้ว AI นับต้นที่เป็นโรค</span>
         </li>
         <li class="steps__item{% if status.step_index == 5 and status.online %} is-done{% endif %}">
           <span class="step-title">5. สรุปผลและเดินทางกลับแท่นชาร์จ</span>
@@ -155,23 +155,15 @@
     </div>
   </div>
 
-  {% call c.card("สรุปผลรอบตรวจ", subtitle="ปุ่มสร้างสรุปใหม่จะเขียนสรุปรายสถานีและทั้งรอบอีกครั้ง (ใช้ AI ถ้าตั้งค่าไว้) ใช้เวลาสักครู่ แล้วโหลดหน้านี้ใหม่", icon="activity") %}
+  {% call c.card("สรุปผลรอบตรวจ", subtitle="สรุปทุกข้อความเขียนโดย AI จากข้อมูลในฐานข้อมูลเท่านั้น ถ้า AI ยังไม่พร้อมระบบจะลองใหม่เองทุก 3 นาที", icon="activity") %}
   {%- if round_rows %}
   <ul class="row-list" role="list">
     {%- for r in round_rows %}
     <li>
       <div class="row__main">
-        <p class="row__name"><a href="/history/{{ r.id }}">รอบที่ {{ r.id }}</a> · {{ r.status }}</p>
-        <p class="row__meta">{{ r.headline or "ยังไม่มีสรุปของรอบนี้" }}{% if r.source %} ({{ "AI" if r.source == "ai" else "อัตโนมัติ" }}){% endif %}</p>
+        <p class="row__name"><a href="/history/{{ r.id }}">รอบที่ {{ r.id }}</a> · {{ r.status }} · <a href="/admin/rounds/{{ r.id }}">รูปที่ใช้วิเคราะห์</a></p>
+        <p class="row__meta">{{ r.headline or "ยังไม่มีสรุปของรอบนี้" }}{% if r.source %} ({{ "AI" if r.source == "ai" else "รอ AI สรุป" }}){% endif %}</p>
       </div>
-      {%- if not can or can("robot", "update") %}
-      <div class="row__side">
-        <form method="post" action="/admin/rounds/{{ r.id }}/summary" data-busy-form>
-          {{ c.csrf_field() }}
-          <button type="submit" class="btn btn--secondary btn--sm">{{ c.icon("refresh", 16) }} <span>สร้างสรุปใหม่</span></button>
-        </form>
-      </div>
-      {%- endif %}
     </li>
     {%- endfor %}
   </ul>

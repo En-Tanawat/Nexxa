@@ -1,6 +1,7 @@
 import base64
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import anthropic
@@ -9,6 +10,7 @@ import openai
 from app import runtime_config
 from app.config import settings
 from app.models import Crop
+from app.stats import BROWN, YELLOW
 from app.providers import UnknownProviderError, get_provider
 
 log = logging.getLogger(__name__)
@@ -22,6 +24,10 @@ class AnalysisResult:
     note: str
     needs_review: bool
     model: str
+    # station analysis only (analyze_station): plants seen / plants per disease class; None for a single-leaf result
+    total: int | None = None
+    yellow: int | None = None
+    brown: int | None = None
 
 
 def build_prompt(crop: Crop) -> str:
@@ -42,6 +48,27 @@ def _schema(crop: Crop) -> dict:
             "note": {"type": "string"},
         },
         "required": ["label", "confidence", "note"],
+        "additionalProperties": False,
+    }
+
+
+def build_station_prompt(crop: Crop, n_images: int) -> str:
+    return (
+        f"ผัก: {crop.name}\n"
+        f"ภาพทั้ง {n_images} ภาพนี้ถ่ายต้นผักกลุ่มเดียวกันในสถานีเดียว (ปกติมีผักประมาณ 3-9 ต้น) จากคนละมุม (บน ซ้าย ขวา) นับผักแต่ละต้นเพียงครั้งเดียวรวมทุกภาพ\n"
+        f"ตอบจำนวนต้น: total = ต้นผักทั้งหมดที่เห็น, yellow = ต้นที่มีอาการ{YELLOW}, brown = ต้นที่มีอาการ{BROWN} "
+        "(ต้นที่มีทั้งสองอาการให้นับเป็น brown เท่านั้น) yellow + brown ต้องไม่เกิน total\n"
+        f"หมายเหตุ: {crop.notes or '-'}\n"
+        "ตอบเป็น JSON: total, yellow, brown, confidence (0-1), note (สั้น ๆ)"
+    )
+
+
+def _station_schema() -> dict:
+    return {
+        "type": "object",
+        "properties": {k: {"type": "integer"} for k in ("total", "yellow", "brown")}
+        | {"confidence": {"type": "number"}, "note": {"type": "string"}},
+        "required": ["total", "yellow", "brown", "confidence", "note"],
         "additionalProperties": False,
     }
 
@@ -105,8 +132,28 @@ def _finalize(text: str, crop: Crop, model: str, who: str = "Claude", parse=json
     return AnalysisResult(label, confidence, note, confidence < settings.min_confidence, model)
 
 
-def _analyze_anthropic(image_bytes: bytes, media_type: str, crop: Crop, prompt: str, client) -> AnalysisResult:
-    schema = _schema(crop)
+def _finalize_station(text: str, crop: Crop, model: str, who: str = "Claude", parse=json.loads) -> AnalysisResult:
+    """Parse + validate a station answer: counts are non-negative integers and yellow + brown <= total."""
+    try:
+        data = parse(text)
+        counts = [data[k] for k in ("total", "yellow", "brown")]
+        confidence, note = float(data["confidence"]), str(data.get("note", ""))
+        if not all(type(c) is int and c >= 0 for c in counts):
+            raise ValueError("counts")
+    except (ValueError, KeyError, TypeError, AttributeError):
+        log.exception("%s answer could not be parsed", who)
+        return _fail(f"คำตอบของ {who} อ่านไม่ได้", model)
+    total, yellow, brown = counts
+    if yellow + brown > total or not 0 <= confidence <= 1:
+        return _fail(f"คำตอบนอกรูปแบบ: total={total} yellow={yellow} brown={brown}", model)
+    return AnalysisResult(None, confidence, note, confidence < settings.min_confidence, model, total, yellow, brown)
+
+
+def _media_type(image: bytes) -> str:
+    return "image/png" if image.startswith(PNG_MAGIC) else "image/jpeg"
+
+
+def _analyze_anthropic(images: list[bytes], crop: Crop, prompt: str, client, schema: dict, finalize: Callable) -> AnalysisResult:
     requested = runtime_config.get_setting(runtime_config.VISION_MODEL) or settings.vision_model
     try:
         if client is None:
@@ -123,9 +170,9 @@ def _analyze_anthropic(image_bytes: bytes, media_type: str, crop: Crop, prompt: 
             messages=[{
                 "role": "user",
                 "content": [
-                    {"type": "image", "source": {
-                        "type": "base64", "media_type": media_type,
-                        "data": base64.standard_b64encode(image_bytes).decode()}},
+                    *({"type": "image", "source": {
+                        "type": "base64", "media_type": _media_type(img),
+                        "data": base64.standard_b64encode(img).decode()}} for img in images),
                     {"type": "text", "text": prompt},
                 ],
             }],
@@ -144,10 +191,10 @@ def _analyze_anthropic(image_bytes: bytes, media_type: str, crop: Crop, prompt: 
     except (TypeError, AttributeError):
         log.exception("Claude answer could not be parsed")
         return _fail("คำตอบของ Claude อ่านไม่ได้", model)
-    return _finalize(text, crop, model)
+    return finalize(text, crop, model)
 
 
-def _analyze_openai_compat(image_bytes, media_type, crop, prompt, client, provider) -> AnalysisResult:
+def _analyze_openai_compat(images, crop, prompt, client, provider, finalize) -> AnalysisResult:
     # non-anthropic providers have no default model: guessing a name would silently call the wrong thing
     model = runtime_config.vision_model()
     if not model:
@@ -160,9 +207,7 @@ def _analyze_openai_compat(image_bytes, media_type, crop, prompt, client, provid
                   "NEXXA_ALLOW_CUSTOM_BASE_URL is not set, or unsafe); the key was not sent", provider.name)
         return _fail(f"base URL ในหน้าตั้งค่า AI ใช้กับ {provider.name} ไม่ได้ (ไม่ใช่โดเมนทางการหรือไม่ปลอดภัย และเซิร์ฟเวอร์"
                      " ไม่ได้ตั้ง NEXXA_ALLOW_CUSTOM_BASE_URL=1) จึงไม่ได้ส่งคีย์", model)
-    instruction = ('\nตอบเป็น JSON object เดียวเท่านั้น รูปแบบ {"label": ..., "confidence": 0-1, "note": ...} '
-                   "ห้ามมีข้อความอื่น")
-    data_uri = f"data:{media_type};base64,{base64.standard_b64encode(image_bytes).decode()}"
+    instruction = "\nตอบเป็น JSON object เดียวเท่านั้น ตามรูปแบบที่ระบุข้างต้น ห้ามมีข้อความอื่น"
     try:
         if client is None:
             key = runtime_config.provider_api_key(provider.name)
@@ -184,7 +229,8 @@ def _analyze_openai_compat(image_bytes, media_type, crop, prompt, client, provid
             timeout=60,
             messages=[{"role": "user", "content": [
                 {"type": "text", "text": prompt + instruction},
-                {"type": "image_url", "image_url": {"url": data_uri}},
+                *({"type": "image_url", "image_url": {"url": f"data:{_media_type(img)};base64,{base64.standard_b64encode(img).decode()}"}}
+                  for img in images),
             ]}],
         )
     except (openai.OpenAIError, TypeError) as e:
@@ -202,21 +248,32 @@ def _analyze_openai_compat(image_bytes, media_type, crop, prompt, client, provid
         return _fail(f"คำตอบของ {provider.name} ถูกตัดเพราะยาวเกินกำหนด", model)
     if finish == "content_filter":
         return _fail(f"{provider.name} บล็อกการวิเคราะห์ภาพนี้", model)
-    return _finalize(text, crop, model, provider.name, _first_json_object)
+    return finalize(text, crop, model, provider.name, _first_json_object)
 
 
-def analyze_leaf(image_bytes: bytes, crop: Crop, client=None, provider: str | None = None) -> AnalysisResult:
-    media_type = "image/png" if image_bytes.startswith(PNG_MAGIC) else "image/jpeg"
-    try:
-        prompt = build_prompt(crop)
-    except AttributeError:  # crop is None / incomplete
-        log.exception("analyze_leaf: no usable crop")
-        return _fail("ไม่มีข้อมูลพืชสำหรับวิเคราะห์")
+def _run(images: list[bytes], crop: Crop, prompt, schema, finalize, client, provider) -> AnalysisResult:
     try:
         prov = get_provider(provider or runtime_config.vision_provider())
     except UnknownProviderError as e:
-        log.exception("analyze_leaf: bad provider")
+        log.exception("analyzer: bad provider")
         return _fail(str(e))
     if prov.kind == "anthropic":
-        return _analyze_anthropic(image_bytes, media_type, crop, prompt, client)
-    return _analyze_openai_compat(image_bytes, media_type, crop, prompt, client, prov)
+        return _analyze_anthropic(images, crop, prompt, client, schema, finalize)
+    return _analyze_openai_compat(images, crop, prompt, client, prov, finalize)
+
+
+def analyze_leaf(image_bytes: bytes, crop: Crop, client=None, provider: str | None = None) -> AnalysisResult:
+    try:
+        prompt, schema = build_prompt(crop), _schema(crop)
+    except AttributeError:  # crop is None / incomplete
+        log.exception("analyze_leaf: no usable crop")
+        return _fail("ไม่มีข้อมูลพืชสำหรับวิเคราะห์")
+    return _run([image_bytes], crop, prompt, schema, _finalize, client, provider)
+
+
+def analyze_station(images: list[bytes], crop: Crop, client=None, provider: str | None = None) -> AnalysisResult:
+    """One request with every photo of a station; the answer counts plants (yellow / brown / total), each plant once."""
+    if not images or crop is None:
+        log.error("analyze_station: no images or no crop")
+        return _fail("ไม่มีรูปหรือข้อมูลพืชสำหรับวิเคราะห์")
+    return _run(images, crop, build_station_prompt(crop, len(images)), _station_schema(), _finalize_station, client, provider)

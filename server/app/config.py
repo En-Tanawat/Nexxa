@@ -27,6 +27,14 @@ class Settings:
     min_confidence: float = 0.6
 
     @property
+    def photos_per_station(self) -> int:
+        """Group photos the robot takes at each station (the summary notes a station with fewer). Read per call."""
+        try:
+            return max(1, min(10, int(os.getenv("NEXXA_PHOTOS_PER_STATION", "3"))))
+        except ValueError:
+            return 3
+
+    @property
     def vision_provider(self) -> str:
         return (os.getenv("NEXXA_VISION_PROVIDER") or "").strip().lower() or "anthropic"  # read per call
 

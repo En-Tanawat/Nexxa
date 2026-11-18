@@ -2,40 +2,14 @@
 {%- set active = "settings" -%}
 {% block title %}ตั้งค่าระบบ{% endblock %}
 {% block content %}
-{{ c.page_header("ตั้งค่าระบบ", eyebrow="การตั้งค่าทั่วไปและจัดการข้อมูล", text="กำหนดค่าระบบโรงเรือน ฮาร์ดแวร์หุ่นยนต์ และเครื่องมือจำลองข้อมูล") }}
-
-{%- if errors %}{{ c.alert("danger", "มี " ~ errors | length ~ " ช่องที่ต้องแก้ไข ดูข้อความสีแดงใต้ช่อง", title="บันทึกไม่สำเร็จ", role="alert") }}{% endif %}
+{{ c.page_header("ตั้งค่าระบบ", eyebrow="การตั้งค่าทั่วไปและจัดการข้อมูล", text="ข้อมูลระบบและเครื่องมือจำลองข้อมูลสำหรับสาธิต") }}
 
 <div class="grid-2">
-  <div>
-    <form class="form" method="post" action="/admin/settings" data-busy-form>
-      {{ c.csrf_field() }}
-      {% call c.card("ข้อมูลโรงเรือนและระบบ", subtitle="ระบุรายละเอียดโรงเรือนสำหรับแสดงผลบนรายงานและแดชบอร์ด", icon="overview") %}
-      <div class="form-grid">
-        {{ c.field("greenhouse_name", "ชื่อโรงเรือน", value=values["greenhouse_name"], error=errors.get("greenhouse_name"), required=false,
-                   help="เช่น โรงเรือนทดลอง NEXXA 1", attrs={"maxlength": 100, "autocomplete": "off"}) }}
-        {{ c.field("greenhouse_location", "ที่ตั้งโรงเรือน", value=values["greenhouse_location"], error=errors.get("greenhouse_location"), required=false,
-                   help="เช่น อาคารวิจัยการเกษตรอัจฉริยะ โซน A", attrs={"maxlength": 200, "autocomplete": "off"}) }}
-        {{ c.field("alert_email", "อีเมลรับแจ้งเตือนปัญหา", value=values["alert_email"], error=errors.get("alert_email"), required=false,
-                   help="แจ้งเตือนเมื่อพบโรคพืชหรือหุ่นยนต์มีปัญหา", attrs={"maxlength": 100, "type": "email", "autocomplete": "off"}) }}
-      </div>
-      {% endcall %}
-
-      {% call c.card("หุ่นยนต์ ESP32", subtitle="ชื่อที่ใช้แสดงผล หุ่นยนต์ส่งภาพจากกล้องมายังเซิร์ฟเวอร์เองผ่าน Device Key", icon="camera") %}
-      <div class="form-grid">
-        {{ c.field("robot_name", "ชื่อหุ่นยนต์ ESP32", value=values["robot_name"], error=errors.get("robot_name"), required=false,
-                   help="เช่น ESP32-CAM Rover Alpha", attrs={"maxlength": 100, "autocomplete": "off"}) }}
-      </div>
-      <div class="form-actions">{{ c.button("บันทึกการตั้งค่า", icon="ok") }}</div>
-      {% endcall %}
-    </form>
-  </div>
-
   <div class="stack-lg">
     <!-- Demo Data Management -->
     {% call c.card("จัดการข้อมูลจำลอง (Demo Data)", subtitle="สร้างหรือล้างข้อมูลประวัติ 100 วันสำหรับการทดสอบ", icon="refresh") %}
     <p class="card__subtitle">
-      คุณสามารถสร้างข้อมูลการตรวจรอบและภาพจำลอง 4 มุมย้อนหลัง 100 วัน เพื่อดูสถิติ กราฟแนวโน้ม และการจำลอง 3D Twin หรือล้างข้อมูลทั้งหมดเมื่อต้องการเริ่มต้นใหม่
+      สร้างข้อมูลตรวจรอบจำลองย้อนหลัง 100 วัน (ภาพ 3 มุมและจำนวนต้นที่เป็นโรคของแต่ละสถานี) เพื่อดูแดชบอร์ดและกราฟแนวโน้ม หรือล้างข้อมูลจำลองเมื่อต้องการเริ่มต้นใหม่
     </p>
     <div class="actions">
       {%- if not can or can("setting", "update") %}

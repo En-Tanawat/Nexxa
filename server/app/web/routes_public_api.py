@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from app import robot, stats, summaries
 from app.db import get_session
-from app.models import Analysis, AppSetting, Batch, Capture, Crop, DailyStat, Round, Station, Summary
+from app.models import AppSetting, Batch, Capture, Crop, DailyStat, Round, Station, StationAnalysis, Summary
 
 RATE_LIMIT = 60  # requests per WINDOW_S per IP
 WINDOW_S = 60
@@ -93,8 +93,7 @@ def summary(session: Session = Depends(get_session)):
         .where(DailyStat.day == day)).one())
     since = datetime.combine(day, datetime.min.time()) - timedelta(days=REVIEW_WINDOW_DAYS)
     pending = session.scalar(
-        select(func.count(Analysis.id)).join(Capture, Analysis.capture_id == Capture.id)
-        .where(Analysis.needs_review.is_(True), Capture.taken_at >= since))
+        select(func.count(StationAnalysis.id)).where(StationAnalysis.needs_review.is_(True), StationAnalysis.created_at >= since))
     open_batches = session.execute(
         select(Batch, Station.name, Crop.name).join(Station, Batch.station_id == Station.id)
         .join(Crop, Batch.crop_id == Crop.id).where(Batch.harvested_on.is_(None), Batch.planted_on <= day, *VISIBLE))
@@ -110,6 +109,8 @@ def summary(session: Session = Depends(get_session)):
         "demo": _demo(session),
         "stations_active": session.scalar(select(func.count(Station.id)).where(*VISIBLE)),
         "captures_today": n_cap,
+        "yellow_today": yellow,
+        "brown_today": brown,
         "abnormal_rate_today": _rate(yellow + brown, normal + yellow + brown),
         "review_pending": pending,
         "lots_near_harvest": lots,
@@ -197,8 +198,8 @@ def _utc_z(dt: datetime) -> str:
     return dt.replace(microsecond=0).isoformat() + "Z"
 
 
-@router.get("/twin")
-def twin(session: Session = Depends(get_session)):
+@router.get("/stations")
+def stations(session: Session = Depends(get_session)):
     day = stats.today()
     stations = session.execute(
         select(Station, Crop.name).outerjoin(Crop, Station.crop_id == Crop.id)
@@ -211,19 +212,20 @@ def twin(session: Session = Depends(get_session)):
     ).all()
     out = []
     for st, crop in stations:
-        # one indexed LIMIT 1 per station (captures(station_id, taken_at), analyses(capture_id)); a window query
+        # one indexed LIMIT 1 per station (station_analyses(round_id, station_id)); a window query
         # over all analyses would scan the whole table on every unauthenticated request.
         # shortcut: fine for a handful of stations; revisit at hundreds.
         last = session.execute(
-            select(Analysis.label, Analysis.confidence, Analysis.needs_review, Capture.taken_at)
-            .join(Capture, Analysis.capture_id == Capture.id).where(Capture.station_id == st.id)
-            .order_by(Capture.taken_at.desc(), Analysis.id.desc()).limit(1)).first()
+            select(StationAnalysis).where(StationAnalysis.station_id == st.id)
+            .order_by(StationAnalysis.created_at.desc(), StationAnalysis.id.desc()).limit(1)).scalars().first()
         batch = stats.active_batch([b for b in batches if b.station_id == st.id], day)
         status, seen, conf = "unknown", None, None
         if last:
-            status = "review" if last.needs_review else _STATUS.get(last.label, "unknown")
-            seen, conf = _utc_z(last.taken_at), last.confidence
-        out.append({"id": st.id, "name": st.name, "crop": crop, "map_x": st.map_x, "map_y": st.map_y,
+            # the worse disease class by plant count (brown wins a tie); no disease but plants seen = normal
+            worst = stats.BROWN if (last.n_brown or 0) >= (last.n_yellow or 0) and last.n_brown else stats.YELLOW if last.n_yellow else stats.NORMAL
+            status = "review" if last.needs_review else _STATUS[worst] if last.n_total else "unknown"
+            seen, conf = _utc_z(last.created_at), last.confidence
+        out.append({"id": st.id, "name": st.name, "crop": crop,
                     "route_order": st.route_order, "status": status,
                     "age_days": stats.age_days(batch, day) if batch else None, "last_seen_at": seen, "confidence": conf})
     return {"stations": out, "updated_at": _now_iso(), "demo": _demo(session)}
@@ -261,7 +263,7 @@ def rounds(limit: int = Query(20, ge=1, le=50), session: Session = Depends(get_s
     heads = dict(session.execute(select(Summary.round_id, Summary.text).where(Summary.round_id.in_(ids), Summary.station_id.is_(None))).all())
     return {"rounds": [
         {"id": r.id, "started_at": _utc_z(r.started_at), "status": r.status, "stations": n_stations.get(r.id, 0),
-         "headline": summaries.headline(heads[r.id]) if r.id in heads else None} for r in rows],
+         "headline": (summaries.headline(heads[r.id]) or None) if r.id in heads else None} for r in rows],
         "demo": _demo(session)}
 
 
@@ -289,7 +291,7 @@ def round_detail(round_id: Annotated[int, Path(ge=1, le=INT_MAX)], session: Sess
 def latest_summary(session: Session = Depends(get_session)):
     row = session.execute(
         select(Summary, Station.name).outerjoin(Station, Summary.station_id == Station.id)
-        .where(or_(Summary.station_id.is_(None), and_(*VISIBLE)))
+        .where(Summary.source == "ai", or_(Summary.station_id.is_(None), and_(*VISIBLE)))
         .order_by(Summary.created_at.desc(), Summary.id.desc()).limit(1)).first()
     if row is None:
         return {"summary": None}
@@ -301,16 +303,14 @@ def latest_summary(session: Session = Depends(get_session)):
 # --- robot screen: one small read for /screen (robot status + this round's station results + the round result) ----
 
 def _screen_station(row: Summary, by_day: dict, day) -> dict:
-    """Findings only: ใบเหลือง / จุดน้ำตาล with their angles, never a count or a label for ปกติ."""
+    """Findings only: ใบเหลือง / จุดน้ำตาล as plant counts, never a count or a label for ปกติ."""
     f = row.facts
-    where = summaries._affected(f["angles"])
     prev = f["previous_visit"]
     yellow, brown = f["counts"][stats.YELLOW], f["counts"][stats.BROWN]
     last = None if prev is None or prev["abnormal_rate"] is None else {
         "round_id": prev["round_id"], "yellow": prev["counts"][stats.YELLOW], "brown": prev["counts"][stats.BROWN]}
-    return {"id": row.id, "level": summaries.display(f)["level"], "present": len(f["present"]),
-            "yellow": yellow, "yellow_angles": where[stats.YELLOW],
-            "brown": brown, "brown_angles": where[stats.BROWN],
+    return {"id": row.id, "level": summaries.display(f)["level"], "present": len(f["present"]), "expected": f["expected"],
+            "yellow": yellow, "brown": brown,
             "abnormal_rate": f["abnormal_rate"], "vs_baseline_pp": f["baseline"]["delta_pp"],
             "vs_previous_pp": prev["delta_pp"] if prev else None,
             "trend": f["trend"]["direction"], "trend_label": f["trend"]["label"],
@@ -338,7 +338,7 @@ def _previous_round_counts(session: Session, round_id: int) -> dict | None:
         return None
     total = {stats.NORMAL: 0, stats.YELLOW: 0, stats.BROWN: 0}
     for sid in summaries.round_station_ids(session, prev):
-        for k, v in summaries._counts(summaries._angle_results(session, prev, sid)[0]).items():
+        for k, v in summaries._station_result(session, prev, sid)["counts"].items():
             total[k] += v
     if not sum(total.values()):
         return None

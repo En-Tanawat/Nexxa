@@ -60,10 +60,9 @@ function renderStrip(robot) {
 }
 
 // ---- hero, tiles ----------------------------------------------------------------------------------
-function setTile(name, n, sides) {
+function setTile(name, n) {
   $(`scr-${name}`).dataset.on = n > 0 ? "1" : "0";
   setText($(`scr-${name}-n`), fmtInt(n));
-  $(`scr-${name}-sides`).replaceChildren(...(n > 0 ? sides : []).map((s) => make("li", "scr-side", s))); // sides only when something was found
 }
 
 function addFact(dl, label, value) {
@@ -80,12 +79,15 @@ function fillDetail(view) {
     addFact(dl, "ตรวจแล้ว", `${fmtInt(s.stations_inspected)} จาก ${fmtInt(s.stations_expected)} สถานี`);
     if (s.rising?.length) addFact(dl, "แนวโน้มเพิ่มขึ้น", s.rising.join(", "));
   } else {
-    addFact(dl, "ตรวจได้", `${fmtInt(s.present)} จาก 4 ด้าน`);
+    addFact(dl, "ตรวจได้", `${fmtInt(s.present)} จาก ${fmtInt(s.expected ?? 3)} รูป`);
     addFact(dl, "แนวโน้ม 14 วัน", s.trend_label);
   }
   addFact(dl, "อัตราผิดปกติ", fmtPct(s.abnormal_rate));
-  $("scr-text").replaceChildren(...String(s.text ?? "").split("\n").filter((l) => l.trim()).map((l) => make("p", "", l)));
-  setText($("scr-src"), `${s.source === "ai" ? "สรุปโดย AI" : "สรุปอัตโนมัติ"} · ${fmtDateTime(s.updated_at)}`);
+  {
+    const lines = String(s.text ?? "").split("\n").filter((l) => l.trim());
+    $("scr-text").replaceChildren(...(lines.length ? lines : ["AI กำลังสรุป ระบบจะลองใหม่เองอัตโนมัติ"]).map((l) => make("p", "", l)));
+  }
+  setText($("scr-src"), `${s.source === "ai" ? "สรุปโดย AI" : "รอ AI สรุป"} · ${fmtDateTime(s.updated_at)}`);
 }
 
 // ---- comparison rows and the trend word ---------------------------------------------------------------
@@ -215,9 +217,8 @@ function renderMain(view) {
   setText($("scr-cap"), view.kind === "round" ? "จบรอบ" : stationLabel(view.station.name));
   setText($("scr-level-text"), LEVEL_TEXT[s.level] ?? "รอผลตรวจ");
   renderSub();
-  const sides = view.kind === "station" ? [s.yellow_angles, s.brown_angles] : [[], []];
-  setTile("yellow", s.yellow, sides[0]);
-  setTile("brown", s.brown, sides[1]);
+  setTile("yellow", s.yellow);
+  setTile("brown", s.brown);
   renderRows(s);
   fillDetail(view);
 }
@@ -239,6 +240,8 @@ function pill(label, level, pressed, onClick, text) {
   return li;
 }
 
+let pillsShown; // which pill was last scrolled into view
+
 function renderPills(view) {
   const ul = $("scr-pills");
   const stations = data.stations ?? [];
@@ -254,6 +257,12 @@ function renderPills(view) {
   b.addEventListener("click", () => { chartAll = !chartAll; paint(true); });
   all.append(b);
   ul.replaceChildren(...items, all);
+  // many stations overflow the strip: bring the selected pill into view, but only when the selection changed (not on every poll)
+  const key = chartAll ? "all" : view.kind === "round" ? "round" : shown;
+  if (key !== pillsShown) {
+    pillsShown = key;
+    ul.querySelector('[aria-pressed="true"]')?.scrollIntoView({ block: "nearest", inline: "center" });
+  }
 }
 
 function syncRanges() {

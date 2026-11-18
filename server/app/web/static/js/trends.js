@@ -125,7 +125,7 @@ function draw(def, model, colors, instant) {
     plugins: [endLabels],
     options: {
       animation: instant ? false : undefined,
-      layout: { padding: { right: narrow ? 6 : LABEL_PAD, top: 6 } },
+      layout: { padding: { right: narrow ? 6 : LABEL_PAD, top: 6, left: 6 } },
       interaction: { mode: "index", intersect: false },
       scales: {
         x: {
@@ -310,3 +310,7 @@ function init() {
 }
 
 init();
+
+// Axis labels are measured when a chart is created: if the web font arrives later the text is wider than its slot and gets
+// clipped, so lay the charts out again once the fonts are in.
+document.fonts?.ready.then(() => state.charts.forEach(({ chart }) => chart.resize()));

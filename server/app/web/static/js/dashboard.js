@@ -1,9 +1,9 @@
-// Public dashboard: fetches /api/public/{summary,twin} (+ a small trends call for "vs yesterday") every 60 s,
+// Public dashboard: fetches /api/public/{summary,stations} (+ a small trends call for "vs yesterday") every 60 s,
 // pauses while the tab is hidden, keeps the last good data on errors.
 // Safety: API data (station names!) only goes into the page with textContent / value / setAttribute on cloned
 // <template> nodes. Never HTML strings.
 import {
-  activityFeed, errorMessage, fmtDateTime, fmtInt, fmtPct, fmtTime, freshness, getJson, harvestInfo,
+  errorMessage, fmtDateTime, fmtInt, fmtPct, fmtTime, freshness, getJson, harvestInfo,
   relativeTime, statusInfo, trendInfo, yesterdayAbnormal,
 } from "./public-lib.js";
 import { initRobotCam as initCamFrames } from "./robot-cam.js";
@@ -20,36 +20,7 @@ const make = (tag, className, text) => {
 };
 const clone = (id) => $(id).content.firstElementChild.cloneNode(true);
 
-const state = { summary: null, twin: null, latest: null, trends: null, trendsAt: 0, fetchedAt: 0, error: null, timer: null, ticker: null, inflight: false };
-let twinInstance = null;
-
-async function syncTwin() {
-  const root = $("twin-root");
-  if (!root) return;
-  if (twinInstance) {
-    if (state.twin) twinInstance.update(state.twin);
-    return;
-  }
-  try {
-    const { mountTwin } = await import("./twin.js");
-    twinInstance = mountTwin(root, () => Promise.resolve(state.twin));
-  } catch (err) {
-    try {
-      const { createFallback } = await import("./twin-fallback.js");
-      const fb = createFallback(document);
-      root.replaceChildren(fb.el);
-      twinInstance = {
-        update(d) {
-          fb.update({ stations: d?.stations ?? [], layout: { width: 12, depth: 8, items: [] }, home: null, selectedId: null });
-        },
-      };
-      if (state.twin) twinInstance.update(state.twin);
-    } catch {
-      // Keep dashboard alive even if twin scripts fail
-    }
-  }
-}
-
+const state = { summary: null, stations: null, latest: null, trends: null, trendsAt: 0, fetchedAt: 0, error: null, timer: null, ticker: null, inflight: false };
 function badge(info) {
   const el = clone(`tpl-badge-${info.kind}`);
   el.lastElementChild.textContent = info.text;
@@ -76,15 +47,14 @@ function setMeta(id, ...nodes) {
 }
 
 function renderKpis(summary, yesterday) {
-  $("kpi-stations").textContent = fmtInt(summary.stations_active);
-  $("kpi-captures").textContent = fmtInt(summary.captures_today);
+  $("kpi-diseased").textContent = fmtInt(summary.yellow_today + summary.brown_today);
+  setMeta("kpi-diseased-meta", make("span", "kpi__note", `ใบเหลือง ${fmtInt(summary.yellow_today)} · จุดน้ำตาล ${fmtInt(summary.brown_today)} ต้น`));
   $("kpi-abnormal").textContent = fmtPct(summary.abnormal_rate_today);
   $("kpi-review").textContent = fmtInt(summary.review_pending);
-  $("kpi-harvest").textContent = fmtInt(summary.lots_near_harvest.length);
   for (const section of document.querySelectorAll(".kpi.is-loading")) section.classList.remove("is-loading");
 
   if (summary.abnormal_rate_today == null) {
-    setMeta("kpi-abnormal-meta", make("span", "kpi__note", "ยังไม่มีภาพที่วิเคราะห์ได้วันนี้"));
+    setMeta("kpi-abnormal-meta", make("span", "kpi__note", "ยังไม่มีผลตรวจวันนี้"));
   } else {
     const t = trendInfo(summary.abnormal_rate_today, yesterday);
     const el = clone(`tpl-trend-${t.dir}`);
@@ -92,10 +62,7 @@ function renderKpis(summary, yesterday) {
     el.lastElementChild.textContent = t.text;
     setMeta("kpi-abnormal-meta", el, make("span", "kpi__note", yesterday == null ? "" : `เมื่อวาน ${fmtPct(yesterday)}`));
   }
-  const cycle = summary.harvest_cycle_days_assumed;
-  const note = `คำนวณจากรอบเก็บเกี่ยว ${fmtInt(cycle)} วัน (ค่าสมมติ)`;
-  setMeta("kpi-harvest-meta", make("span", "", note));
-  $("lot-note").textContent = `กำหนดเก็บเกี่ยวคำนวณจากรอบ ${fmtInt(cycle)} วันนับจากวันปลูก (ค่าสมมติ ไม่ใช่วันที่ผู้ปลูกกำหนด)`;
+  $("lot-note").textContent = `กำหนดเก็บเกี่ยวคำนวณจากรอบ ${fmtInt(summary.harvest_cycle_days_assumed)} วันนับจากวันปลูก (ค่าสมมติ ไม่ใช่วันที่ผู้ปลูกกำหนด)`;
 }
 
 function renderLots(summary) {
@@ -109,20 +76,19 @@ function renderLots(summary) {
   }));
 }
 
-function renderStations(twin, now) {
-  const stations = twin.stations;
-  $("stations-sub").textContent = stations.length ? `${fmtInt(stations.length)} สถานี · สถานะจากภาพล่าสุด` : "สถานะจากภาพล่าสุดของแต่ละสถานี";
+function renderStations(data, now) {
+  const stations = data.stations;
+  $("stations-sub").textContent = stations.length ? `${fmtInt(stations.length)} สถานี · สถานะจากผลตรวจล่าสุด` : "สถานะจากผลตรวจล่าสุดของแต่ละสถานี";
   fill("station-list", "station-empty", stations.map((s) => row(
     "tpl-station", s.name,
     `${s.crop ?? "ไม่ระบุผัก"} · ${s.age_days == null ? "ยังไม่มีล็อตที่ปลูกอยู่" : `อายุ ${fmtInt(s.age_days)} วัน`}`,
     statusInfo(s.status), relativeTime(s.last_seen_at, now),
   )));
-  fill("activity-list", "activity-empty", activityFeed(stations, now).map((a) => row("tpl-activity", a.name, a.when, a.badge)));
 }
 
 function renderPill(now) {
   const pill = $("fresh-pill");
-  const updated = state.summary?.updated_at ?? state.twin?.updated_at ?? null;
+  const updated = state.summary?.updated_at ?? state.stations?.updated_at ?? null;
   let kind = "loading";
   let label = "กำลังโหลดข้อมูล";
   if (updated) {
@@ -146,12 +112,12 @@ function renderPill(now) {
 
 function renderLatest(latest) {
   if (!latest) return;
-  const lines = String(latest.text ?? "").split("
-").filter((l) => l.trim());
+  const lines = String(latest.text ?? "").split("\n").filter((l) => l.trim());
+  if (!lines.length) lines.push("AI กำลังสรุป ระบบจะลองใหม่เองอัตโนมัติ");
   $("latest-text").replaceChildren(...lines.map((l) => make("p", "", l)));
   const ai = latest.source === "ai";
   const badge = clone(`tpl-badge-${ai ? "info" : "neutral"}`);
-  badge.lastElementChild.textContent = ai ? "สรุปโดย AI" : "สรุปอัตโนมัติ";
+  badge.lastElementChild.textContent = ai ? "สรุปโดย AI" : "รอ AI สรุป";
   $("latest-src").replaceChildren(badge, make("span", "", `อัปเดต ${fmtDateTime(latest.updated_at)}`));
   $("latest-sub").textContent = latest.station ? `รอบที่ ${fmtInt(latest.round_id)} · สถานี ${latest.station}` : `สรุปทั้งรอบที่ ${fmtInt(latest.round_id)}`;
   $("latest-link").setAttribute("href", `/history/${Number(latest.round_id)}`);
@@ -159,14 +125,14 @@ function renderLatest(latest) {
 
 function render() {
   const now = Date.now();
-  const { summary, twin } = state;
+  const { summary, stations } = state;
   renderPill(now);
   const banner = $("error-banner");
   banner.hidden = !state.error;
   if (state.error) $("error-text").textContent = errorMessage(state.error);
-  $("demo-banner").hidden = !(summary?.demo || twin?.demo);
-  if (!summary && !twin) return; // nothing loaded yet: keep the reserved skeleton
-  const empty = (summary?.stations_active ?? 0) === 0 && (twin?.stations.length ?? 0) === 0;
+  $("demo-banner").hidden = !(summary?.demo || stations?.demo);
+  if (!summary && !stations) return; // nothing loaded yet: keep the reserved skeleton
+  const empty = (summary?.stations_active ?? 0) === 0 && (stations?.stations.length ?? 0) === 0;
   $("dashboard-empty").hidden = !empty;
   $("kpi-grid").hidden = empty;
   $("dashboard-main").hidden = empty;
@@ -175,10 +141,7 @@ function render() {
     renderLots(summary);
   }
   renderLatest(state.latest);
-  if (twin) {
-    renderStations(twin, now);
-    syncTwin();
-  }
+  if (stations) renderStations(stations, now);
 }
 
 function schedule(ms) {
@@ -193,13 +156,13 @@ async function refresh() {
   const wantTrends = Date.now() - state.trendsAt >= TRENDS_EVERY_MS;
   const [s, t, tr, lt] = await Promise.allSettled([
     getJson("/api/public/summary"),
-    getJson("/api/public/twin"),
+    getJson("/api/public/stations"),
     wantTrends ? getJson("/api/public/trends?days=2") : Promise.resolve(state.trends),
     getJson("/api/public/summaries/latest"),
   ]);
   state.inflight = false;
   if (s.status === "fulfilled") state.summary = s.value;
-  if (t.status === "fulfilled") state.twin = t.value;
+  if (t.status === "fulfilled") state.stations = t.value;
   if (lt.status === "fulfilled") state.latest = lt.value.summary; // a failure here never turns the page into an error
   if (tr.status === "fulfilled") {
     if (wantTrends) state.trendsAt = Date.now();
@@ -264,23 +227,12 @@ function renderRobotOffline() {
 
   if (robotCam) robotCam.setStatus({ online: false });
 
-  if ($("robot-chip-angle")) $("robot-chip-angle").hidden = true;
   if ($("robot-chip-station")) $("robot-chip-station").hidden = true;
   if ($("robot-chip-battery")) $("robot-chip-battery").hidden = true;
-  if ($("robot-chip-wifi")) $("robot-chip-wifi").hidden = true;
 
   if ($("robot-current-step")) $("robot-current-step").textContent = "หุ่นยนต์ออฟไลน์ (ขาดการติดต่อเกิน 45 วินาที)";
   if ($("robot-round-pill")) $("robot-round-pill").textContent = "รอบที่: –";
   if ($("robot-station-pill")) $("robot-station-pill").textContent = "สถานี: –";
-  if ($("robot-angle-pill")) $("robot-angle-pill").textContent = "มุมกล้อง: –";
-
-  for (let i = 1; i <= 5; i++) {
-    const el = $("robot-step-" + i);
-    if (el) {
-      el.classList.remove("is-done", "is-active");
-      el.classList.add("is-pending");
-    }
-  }
 }
 
 function renderRobot(data) {
@@ -315,17 +267,6 @@ function renderRobot(data) {
 
   if (robotCam) robotCam.setStatus(data);
 
-  const angleChip = $("robot-chip-angle");
-  const angleText = $("robot-chip-angle-text");
-  if (angleChip && angleText) {
-    if (data.camera_angle) {
-      angleChip.hidden = false;
-      angleText.textContent = `มุม: ${data.camera_angle_label || data.camera_angle}`;
-    } else {
-      angleChip.hidden = true;
-    }
-  }
-
   const stationChip = $("robot-chip-station");
   const stationText = $("robot-chip-station-text");
   if (stationChip && stationText) {
@@ -349,17 +290,6 @@ function renderRobot(data) {
     }
   }
 
-  const wifiChip = $("robot-chip-wifi");
-  const wifiText = $("robot-chip-wifi-text");
-  if (wifiChip && wifiText) {
-    if (data.wifi_rssi != null) {
-      wifiChip.hidden = false;
-      wifiText.textContent = `${data.wifi_rssi} dBm`;
-    } else {
-      wifiChip.hidden = true;
-    }
-  }
-
   if ($("robot-current-step")) {
     $("robot-current-step").textContent = data.step || "-";
   }
@@ -369,26 +299,6 @@ function renderRobot(data) {
   if ($("robot-station-pill")) {
     const stName = data.station_name || (data.station_id ? `สถานี ${data.station_id}` : "–");
     $("robot-station-pill").textContent = `สถานี: ${stName}`;
-  }
-  if ($("robot-angle-pill")) {
-    const ang = data.camera_angle ? (data.camera_angle_label || data.camera_angle) : "–";
-    $("robot-angle-pill").textContent = `มุมกล้อง: ${ang}`;
-  }
-
-  const activeStep = data.step_index || 1;
-  for (let i = 1; i <= 5; i++) {
-    const el = $("robot-step-" + i);
-    if (!el) continue;
-    el.classList.remove("is-done", "is-active", "is-pending");
-    if (!isOnline) {
-      el.classList.add("is-pending");
-    } else if (i < activeStep) {
-      el.classList.add("is-done");
-    } else if (i === activeStep) {
-      el.classList.add("is-active");
-    } else {
-      el.classList.add("is-pending");
-    }
   }
 }
 

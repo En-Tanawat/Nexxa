@@ -74,6 +74,30 @@ class Analysis(Base):
     needs_review: Mapped[bool] = mapped_column(default=False)
 
 
+class StationAnalysis(Base):
+    """One vision call over all of a station's photos in a round: plants seen and plants per disease class.
+    Counts are NULL when the call failed or its answer was invalid (needs_review is then set)."""
+    __tablename__ = "station_analyses"
+    __table_args__ = (
+        Index("ix_station_analyses_round_station", "round_id", "station_id"),
+        Index("ix_station_analyses_created", "created_at"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    round_id: Mapped[int] = mapped_column(ForeignKey("rounds.id"))
+    station_id: Mapped[int] = mapped_column(ForeignKey("stations.id"))
+    n_photos: Mapped[int]
+    n_total: Mapped[int | None]
+    n_yellow: Mapped[int | None]
+    n_brown: Mapped[int | None]
+    confidence: Mapped[float | None]
+    note: Mapped[str | None]
+    model: Mapped[str | None]
+    needs_review: Mapped[bool] = mapped_column(default=False)
+    # the photos this call was given: [{"capture_id", "angle", "path"}], path relative to the image directory
+    photos: Mapped[list | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+
+
 class Batch(Base):
     __tablename__ = "batches"
     __table_args__ = (
