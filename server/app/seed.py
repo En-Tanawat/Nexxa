@@ -22,8 +22,6 @@ PROMPT = (
 # TODO: replace the placeholder rfid_uid values with the real tag UIDs when the tags are installed.
 STATIONS = [
     dict(rfid_uid="TODO-REPLACE-1", name="สถานี 1", kind="station", route_order=1, map_x=1.0, map_y=0.0),
-    dict(rfid_uid="TODO-REPLACE-2", name="สถานี 2", kind="station", route_order=2, map_x=2.0, map_y=0.0),
-    dict(rfid_uid="TODO-REPLACE-3", name="สถานี 3", kind="station", route_order=3, map_x=3.0, map_y=0.0),
     dict(rfid_uid="TODO-REPLACE-HOME", name="จุดเริ่มต้น", kind="home", route_order=0, map_x=0.0, map_y=0.0),
 ]
 

@@ -24,6 +24,7 @@ from app import stats
 from app.models import AppSetting, Batch, Capture, Crop, DailyStat, Round, Station, StationAnalysis, Summary
 
 ANGLES = ["top", "left", "right"]
+STATIONS = 1  # one station for now, holding many plants
 PLANTS_PER_STATION = (3, 9)  # demo: a station holds this many plants (fixed per station); the simulated AI counts the diseased ones
 DEMO_PREFIX = "demo://"
 DEMO_IMAGE_TPL = "demo://synthetic/{station_id}/{day}/{angle}.jpg"
@@ -98,14 +99,14 @@ def _ensure_crop(session: Session) -> Crop:
 
 
 def _ensure_stations(session: Session, crop: Crop) -> list[Station]:
-    """Find or create 3 inspection stations + 1 home station."""
+    """Find or create the inspection stations (STATIONS of them) + 1 home station."""
     stations = session.scalars(
         select(Station).where(Station.kind == "station").order_by(Station.route_order, Station.id)
     ).all()
 
-    if len(stations) < 3:
+    if len(stations) < STATIONS:
         # Create missing demo stations
-        needed = 3 - len(stations)
+        needed = STATIONS - len(stations)
         existing_count = len(stations)
         for i in range(needed):
             idx = existing_count + i + 1
@@ -143,12 +144,12 @@ def _ensure_stations(session: Session, crop: Crop) -> list[Station]:
         session.add(home)
         session.flush()
 
-    for s in stations[:3]:
+    for s in stations[:STATIONS]:
         if s.crop_id is None:
             s.crop_id = crop.id
     session.flush()
 
-    return list(stations[:3])
+    return list(stations[:STATIONS])
 
 
 def _setup_batches(
