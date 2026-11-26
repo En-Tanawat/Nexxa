@@ -21,7 +21,7 @@ from sqlalchemy import delete, func, not_, select
 from sqlalchemy.orm import Session
 
 from app import stats
-from app.models import AppSetting, Batch, Capture, Crop, DailyStat, Round, Station, StationAnalysis, Summary
+from app.models import AppSetting, Batch, Capture, CaptureImage, Crop, DailyStat, Round, Station, StationAnalysis, Summary
 
 ANGLES = ["top", "left", "right"]
 STATIONS = 1  # one station for now, holding many plants
@@ -374,6 +374,7 @@ def clear(session: Session) -> dict:
     ).all()
 
     if demo_cap_ids:
+        session.execute(delete(CaptureImage).where(CaptureImage.capture_id.in_(demo_cap_ids)))
         session.execute(delete(Capture).where(Capture.id.in_(demo_cap_ids)))
 
     # Find demo rounds

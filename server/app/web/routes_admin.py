@@ -17,7 +17,6 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from pathlib import Path as FsPath
 
 from app import seed_demo, storage, summaries
 from app.create_admin import MIN_PASSWORD_LEN
@@ -801,12 +800,11 @@ def round_page(request: Request, round_id: Id, session: Session = Depends(get_se
 
 @router.get("/captures/{capture_id}/image", dependencies=[Depends(deps.require_permission("robot", "read"))])
 def capture_image(capture_id: Id, session: Session = Depends(get_session)):
-    """The stored photo, only from inside the image directory (the path comes from the database, never from the URL)."""
+    """The stored photo from the database (older rows: a file, only from inside the image directory)."""
     cap = session.get(Capture, capture_id)
-    path = FsPath(cap.image_path).resolve() if cap else None
-    if path is None or storage.settings.image_dir.resolve() not in path.parents or not path.is_file():
-        raise HTTPException(404, "image not available")  # also after a host restart wiped the files
-    data = path.read_bytes()
+    data = storage.load_image(session, cap) if cap else None
+    if data is None:
+        raise HTTPException(404, "image not available")  # also an old file a host restart wiped
     kind = "image/png" if data.startswith(b"\x89PNG") else "image/jpeg"
     return Response(data, media_type=kind, headers={"Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff"})
 

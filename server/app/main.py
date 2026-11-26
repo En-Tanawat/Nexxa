@@ -321,7 +321,7 @@ def create_capture(
     session.flush()
     # read everything the response and the rollup need before commit(): commit expires the ORM objects
     day, capture_id, station_id = capture.taken_at.date(), capture.id, station.id
-    capture.image_path = storage.save_image(data, round_id, station.id, capture.id)
+    capture.image_path = storage.save_image(session, data, capture.id)
 
     # no AI call here: the station's photos are analysed together when the robot asks for the station summary
     status = "stored" if quality.ok else "retake" if failed_attempt <= settings.max_retakes else "needs_review"

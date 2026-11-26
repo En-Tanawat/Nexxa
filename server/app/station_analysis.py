@@ -22,7 +22,9 @@ def usable_captures(session: Session, round_id: int, station_id: int) -> list[Ca
 
 
 def _relative(image_path: str) -> str:
-    """Path under the image directory (so the mapping survives moving that directory); unchanged when it is outside."""
+    """Path under the image directory (so the mapping survives moving that directory); unchanged when it is outside or in the DB."""
+    if image_path.startswith(storage.DB_PREFIX):
+        return image_path
     try:
         return Path(image_path).resolve().relative_to(storage.settings.image_dir.resolve()).as_posix()
     except ValueError:
@@ -34,10 +36,10 @@ def run(session: Session, round_id: int, station_id: int) -> StationAnalysis:
     caps = usable_captures(session, round_id, station_id)
     images, photos = [], []
     for c in caps:
-        try:
-            images.append(Path(c.image_path).read_bytes())
-        except OSError:  # file gone (e.g. host restarted): analyse what is left
+        data = storage.load_image(session, c)
+        if data is None:  # an old file-based photo that is gone (host restarted): analyse what is left
             continue
+        images.append(data)
         photos.append({"capture_id": c.id, "angle": c.camera_angle, "path": _relative(c.image_path)})
     crop = session.get(Crop, session.get(Station, station_id).crop_id)
     session.commit()  # end the read transaction: the AI call below can take half a minute

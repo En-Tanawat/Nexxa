@@ -204,3 +204,11 @@ class AuditLog(Base):
     action: Mapped[str]
     target: Mapped[str]
     detail: Mapped[str | None]
+
+
+class CaptureImage(Base):
+    """The photo bytes, kept in the database so they survive host restarts (Render's disk is wiped on every deploy).
+    A separate table so listing captures never loads the images."""
+    __tablename__ = "capture_images"
+    capture_id: Mapped[int] = mapped_column(ForeignKey("captures.id"), primary_key=True)
+    data: Mapped[bytes] = mapped_column(LargeBinary)
