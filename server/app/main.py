@@ -123,6 +123,8 @@ async def page_security_headers(request: Request, call_next):
         response.headers.setdefault("X-Frame-Options", "DENY")
     if request.url.path.startswith("/admin"):
         response.headers["Cache-Control"] = "no-store, private"
+    elif request.url.path.startswith("/static/"):
+        response.headers.setdefault("Cache-Control", "no-cache")  # revalidate (ETag -> 304) so a deploy shows up without Ctrl+F5
     return response
 
 
